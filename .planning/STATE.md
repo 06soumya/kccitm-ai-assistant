@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Completed 01-secrets-security-foundation-01-01-PLAN.md
-last_updated: "2026-03-11T10:17:17.559Z"
+stopped_at: Completed 01-secrets-security-foundation-01-02-PLAN.md
+last_updated: "2026-03-11T10:22:38.332Z"
 last_activity: 2026-03-11 — Roadmap created; 27 requirements mapped across 7 phases
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -51,6 +51,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 01-secrets-security-foundation P01 | 2min | 3 tasks | 5 files |
+| Phase 01-secrets-security-foundation P02 | 3 | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,8 @@ Recent decisions affecting current work:
 - Keep intent-based parsing — marks accuracy requires deterministic routing
 - [Phase 01-secrets-security-foundation]: Added bcrypt to requirements.txt alongside pytest — bcrypt is an import-time dep of test_sec03.py (Rule 2 auto-fix)
 - [Phase 01-secrets-security-foundation]: Test scaffolding committed before implementation (Wave 0 pattern) so Plans 02/03 have runnable verify commands
+- [Phase 01-secrets-security-foundation]: os.getenv with fallback only for DB_HOST (non-secret); DB_USER/DB_PASSWORD/DB_NAME have no default to avoid silent misconfiguration
+- [Phase 01-secrets-security-foundation]: ADMIN_PASS left blank in .env; hardcoding a default admin password in source would defeat Plan 03 secure setup
 
 ### Pending Todos
 
@@ -77,6 +80,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-11T10:17:17.557Z
-Stopped at: Completed 01-secrets-security-foundation-01-01-PLAN.md
+Last session: 2026-03-11T10:22:38.330Z
+Stopped at: Completed 01-secrets-security-foundation-01-02-PLAN.md
 Resume file: None

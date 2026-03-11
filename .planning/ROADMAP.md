@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `.env` and `chat_memory.json` appear in `.gitignore` and are not tracked by git
   3. A `users` table exists in MySQL with a bcrypt-hashed password column (no plaintext stored)
   4. The application starts successfully reading DB credentials from environment variables only
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 
 Plans:
 - [ ] 01-01-PLAN.md — Create test scaffolding (Wave 0): pytest package, SEC-01/02/03 test files
@@ -112,7 +112,7 @@ Phases execute in dependency order: 1 → 2 → 3 → 4 → 5 → 6 (Phase 7 can
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Secrets & Security Foundation | 1/3 | In Progress|  |
+| 1. Secrets & Security Foundation | 2/3 | In Progress|  |
 | 2. Authentication & Session Isolation | 0/? | Not started | - |
 | 3. Database Hardening | 0/? | Not started | - |
 | 4. Code Architecture Refactor | 0/? | Not started | - |
