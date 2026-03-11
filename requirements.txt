@@ -1,0 +1,7 @@
+streamlit
+sentence-transformers
+faiss-cpu
+mysql-connector-python
+pandas
+pytest==8.3.5
+bcrypt
