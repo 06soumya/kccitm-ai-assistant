@@ -1,0 +1,31 @@
+services:
+  mysql_kccitm:
+    image: mysql:latest
+    restart: always
+    environment:
+      MYSQL_DATABASE: 'kccitm'
+      MYSQL_USER: 'user'
+      MYSQL_PASSWORD: 'qCsfeuECc3MW'
+      MYSQL_ROOT_PASSWORD: 'qCsfeuECc3MW'
+    ports:
+      - '3306:3306'
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-custom.cnf:/etc/mysql/conf.d/custom.cnf
+
+  milvus:
+    image: milvusdb/milvus:latest
+    command: ['milvus', 'run', 'standalone']
+    restart: always
+    ports:
+      - '19530:19530'
+      - '9091:9091'
+    volumes:
+      - milvus_data:/var/lib/milvus
+    environment:
+      ETCD_USE_EMBED: 'true'
+      COMMON_STORAGETYPE: 'local'
+
+volumes:
+  mysql_data:
+  milvus_data:

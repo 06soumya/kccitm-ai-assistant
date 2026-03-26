@@ -1,30 +1,22 @@
-# Secrets — never commit
-.env
-
-# Application data files
-chat_memory.json
-
-# Python
+venv/
+venv312/
+.venv/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-
-# Virtual environments
-venv/
-.venv/
-env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-
-# FAISS index files (large binary, regenerable)
-*.index
-faiss_store/
-
-# OS
+.env
+.env.local
+*.db
+node_modules/
+.next/
 .DS_Store
-Thumbs.db
+_legacy/
+*.log
+*.jsonl
+*.gguf
+*.bin
+*.safetensors
+mysql-data/
+milvus-data/
+.idea/
+.vscode/
+.milvus.db.lock

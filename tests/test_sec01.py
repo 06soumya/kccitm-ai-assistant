@@ -30,14 +30,22 @@ def test_credentials_from_env():
 
     mock_connect = MagicMock()
 
-    with patch.dict(os.environ, fake_env, clear=False):
-        with patch("mysql.connector.connect", mock_connect):
-            # Remove cached module so it reimports with fresh env
-            if "db_marks" in sys.modules:
-                del sys.modules["db_marks"]
+    # Save the original module so other tests' imported references keep working
+    _original_db_marks = sys.modules.get("db_marks")
+    try:
+        with patch.dict(os.environ, fake_env, clear=False):
+            with patch("mysql.connector.connect", mock_connect):
+                # Remove cached module so it reimports with fresh env
+                if "db_marks" in sys.modules:
+                    del sys.modules["db_marks"]
 
-            import db_marks
-            db_marks.get_connection()
+                import db_marks
+                db_marks.get_connection()
+    finally:
+        # Restore original module so patch("db_marks.X") keeps targeting the
+        # same object that other test modules imported via `from db_marks import X`
+        if _original_db_marks is not None:
+            sys.modules["db_marks"] = _original_db_marks
 
     # The password used must come from the env var, not a hardcoded string
     call_kwargs = mock_connect.call_args[1]
@@ -60,13 +68,18 @@ def test_db_connection_from_env():
 
     mock_connect = MagicMock()
 
-    with patch.dict(os.environ, fake_env, clear=False):
-        with patch("mysql.connector.connect", mock_connect):
-            if "db_connection" in sys.modules:
-                del sys.modules["db_connection"]
+    _original_db_connection = sys.modules.get("db_connection")
+    try:
+        with patch.dict(os.environ, fake_env, clear=False):
+            with patch("mysql.connector.connect", mock_connect):
+                if "db_connection" in sys.modules:
+                    del sys.modules["db_connection"]
 
-            import db_connection
-            db_connection.get_connection()
+                import db_connection
+                db_connection.get_connection()
+    finally:
+        if _original_db_connection is not None:
+            sys.modules["db_connection"] = _original_db_connection
 
     call_kwargs = mock_connect.call_args[1]
     assert call_kwargs.get("password") == "test-secret", (
