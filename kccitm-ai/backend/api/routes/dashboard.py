@@ -364,3 +364,18 @@ async def chunk_analytics(
             for r in rows
         ],
     }
+
+
+@router.post("/dashboard/refresh-schema")
+async def refresh_schema(_: TokenData = Depends(require_admin)):
+    """Clear and re-read the database schema cache."""
+    from core.schema_reader import schema_reader
+
+    schema_reader.clear_cache()
+    schema = await schema_reader.read_schema()
+    return {
+        "message": "Schema refreshed",
+        "tables": len(schema["tables"]),
+        "foreign_keys": len(schema["foreign_keys"]),
+        "row_counts": schema["row_counts"],
+    }

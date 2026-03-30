@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 2048
     LLM_NUM_CTX: int = 32768
 
+    # ── SQL pipeline ──────────────────────────────────────────────────────────
+    USE_DYNAMIC_SCHEMA: bool = True   # True = auto-discover schema; False = hardcoded
+
 
 # Singleton instance — import this everywhere
 settings = Settings()

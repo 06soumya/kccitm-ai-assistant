@@ -61,6 +61,9 @@ export const clearCache = () => adminFetch<any>('/api/admin/cache/clear', { meth
 // Health
 export const getSystemHealth = () => adminFetch<any>('/api/health');
 
+// Schema
+export const refreshSchema = () => adminFetch<any>('/api/admin/dashboard/refresh-schema', { method: 'POST' });
+
 // Jobs
 export const triggerHealing = () => adminFetch<any>('/api/admin/jobs/healing/run', { method: 'POST' });
 export const triggerFAQGen = () => adminFetch<any>('/api/admin/jobs/faq/run', { method: 'POST' });

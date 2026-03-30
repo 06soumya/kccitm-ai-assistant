@@ -1,15 +1,18 @@
 """
 Text-to-SQL pipeline for KCCITM AI Assistant.
 
-BIRD-bench inspired upgrades:
+BIRD-bench + LogicCat inspired upgrades:
   1. Schema linking — only include relevant tables/columns in the prompt
   2. Self-correction — retry with error context on failure (max 2 retries)
   3. Execution verification — sanity-check results before returning
   4. Chain-of-thought — force step-by-step reasoning before SQL generation
   5. Database value hints — POSSIBLE VALUES for every enum-like column
+  6. Dynamic schema reader — auto-discovers tables/columns at runtime
+  7. Query decomposition — breaks complex queries into sub-steps
+  8. Formula reference — pre-built SQL patterns for common calculations
 
-Orchestrates: schema linking → CoT prompt → LLM generates SQL → safety validation →
-MySQL execution → self-correction loop → verification → formatted results.
+Orchestrates: schema discovery → schema linking → CoT prompt → LLM generates SQL →
+safety validation → MySQL execution → self-correction loop → verification → formatted results.
 
 Usage:
     from core.llm_client import OllamaClient
@@ -36,6 +39,41 @@ from core.router import RouteResult
 from db.mysql_client import execute_query
 
 logger = logging.getLogger(__name__)
+
+
+# ── IMPROVEMENT 3: Formula Reference ─────────────────────────────────────────
+
+FORMULA_REFERENCE = """
+=== FORMULA REFERENCE (use these for calculations) ===
+- CGPA: SELECT s.name, ROUND(AVG(sr.sgpa), 2) as cgpa FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no GROUP BY s.roll_no
+- Pass rate: ROUND(SUM(CASE WHEN sr.result_status = 'PASS' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2)
+- Fail rate: ROUND(SUM(CASE WHEN sr.result_status LIKE 'CP%%' OR sr.result_status = 'FAIL' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2)
+- Subject total marks: COALESCE(sm.internal_marks, 0) + COALESCE(sm.external_marks, 0)
+- Back paper rate: ROUND(SUM(CASE WHEN sm.back_paper != '--' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2)
+- Grade F rate per subject: ROUND(SUM(CASE WHEN sm.grade = 'F' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) GROUP BY sm.subject_code, sm.subject_name
+- SGPA change between semesters: FROM semester_results sr1 JOIN semester_results sr2 ON sr1.roll_no = sr2.roll_no AND sr2.semester = sr1.semester + 1
+- Students who passed ALL semesters: GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status != 'PASS' THEN 1 ELSE 0 END) = 0
+- Batch filter (no batch_year column): WHERE s.roll_no LIKE '21%%' for 2021 batch
+- Gender comparison: GROUP BY s.gender with JOIN students s ON s.roll_no = sr.roll_no
+- Percentage of group: ROUND(subquery_count * 100.0 / total_count, 2) — or use COUNT with CASE WHEN
+"""
+
+# ── KCCITM-specific domain hints (things schema reader can't discover) ────────
+
+DOMAIN_HINTS = """
+=== DOMAIN-SPECIFIC HINTS (KCCITM university data) ===
+- There is NO batch_year column. Batch is derived from roll_no prefix: 21 = 2021, 22 = 2022, 23 = 2023, 24 = 2024, 25 = 2025.
+- Branch names are ALWAYS the full name: 'COMPUTER SCIENCE AND ENGINEERING' never 'CSE'.
+  Map: CSE -> 'COMPUTER SCIENCE AND ENGINEERING', ECE -> 'ELECTRONICS AND COMMUNICATION ENGINEERING', ME -> 'MECHANICAL ENGINEERING'
+- Student names are ALWAYS UPPERCASE in the database.
+- There is NO total_marks column in subject_marks. Calculate it: COALESCE(sm.internal_marks, 0) + COALESCE(sm.external_marks, 0)
+- Pass/fail is determined by result_status, NOT by SGPA threshold:
+  Passed: sr.result_status = 'PASS'
+  Failed: sr.result_status LIKE 'CP%%' OR sr.result_status = 'FAIL'
+- back_paper = '--' means NO back paper; anything else means HAS back paper.
+- SGPA range is 0.00 to 10.00. Values > 10 are impossible.
+- Semesters range from 1 to 8.
+"""
 
 
 # ── UPGRADE 1: Schema Linking ────────────────────────────────────────────────
@@ -502,17 +540,23 @@ class SQLPipeline:
 
     async def run(self, query: str, route_result: RouteResult) -> SQLResult:
         """
-        Full BIRD-style pipeline: schema link → CoT generate → validate → execute →
-        self-correct → verify → format.
+        Full BIRD+LogicCat pipeline: decompose → schema link → CoT generate →
+        validate → execute → self-correct → verify → format.
 
         Never raises — all error paths return SQLResult(success=False, error="...").
         """
+        # IMPROVEMENT 2: Query decomposition — get hints for complex queries
+        steps = await self.decompose_query(query)
+        decomp_hint = steps[0].get("hint", "") if steps else ""
+
         # UPGRADE 1: Schema linking
         linked = schema_link(query)
         linked_schema_text = _build_linked_schema(linked)
 
-        # Step 1: Generate SQL with chain-of-thought
-        generated = await self._generate_sql(query, route_result, linked_schema_text)
+        # Step 1: Generate SQL with chain-of-thought + decomposition hint
+        generated = await self._generate_sql(
+            query, route_result, linked_schema_text, hint=decomp_hint
+        )
         if not generated.success:
             return generated
         generated.schema_linked = linked
@@ -560,6 +604,7 @@ class SQLPipeline:
         error_context: Optional[str] = None,
         previous_sql: Optional[str] = None,
         temperature: float = 0.05,
+        hint: str = "",
     ) -> SQLResult:
         """Use LLM to generate SQL from natural language with chain-of-thought."""
         system_prompt = await self._get_system_prompt(linked_schema_text)
@@ -570,7 +615,7 @@ class SQLPipeline:
                 previous_sql=previous_sql, error_message=error_context
             )
         else:
-            user_prompt = self._build_user_prompt(query, route_result)
+            user_prompt = self._build_user_prompt(query, route_result, hint=hint)
 
         try:
             response = await self.llm.generate(
@@ -608,9 +653,52 @@ class SQLPipeline:
         except Exception as exc:
             return SQLResult(success=False, error=f"SQL retry generation failed: {exc}")
 
+    async def decompose_query(self, query: str) -> list[dict]:
+        """
+        IMPROVEMENT 2: Break complex queries into executable sub-steps.
+        Returns a list of step dicts with 'question' and optional 'hint'.
+        """
+        q = query.lower()
+
+        # Pattern: "compare X and Y" or "X vs Y"
+        if any(w in q for w in ["compare", " vs ", "versus", "difference between"]):
+            return [{"step": 1, "question": query, "hint": "Use GROUP BY to compare groups side by side. For batch comparison, use roll_no LIKE prefix."}]
+
+        # Pattern: "percentage of X who Y"
+        if "percentage" in q or "percent" in q or "rate" in q:
+            return [{"step": 1, "question": query, "hint": "Use ROUND(SUM(CASE WHEN condition THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) for percentage calculation."}]
+
+        # Pattern: "improved/dropped between"
+        if any(w in q for w in ["improved", "dropped", "increased", "decreased", "trend", "change"]):
+            return [{"step": 1, "question": query, "hint": "Use self-join on semester_results: sr1 JOIN semester_results sr2 ON sr1.roll_no = sr2.roll_no AND sr2.semester = sr1.semester + 1, then compare sr2.sgpa > sr1.sgpa."}]
+
+        # Pattern: "subjects where X% got grade Y"
+        if "subjects" in q and ("grade" in q or "%" in q or "percent" in q):
+            return [{"step": 1, "question": query, "hint": "GROUP BY sm.subject_code, sm.subject_name with HAVING clause on the percentage. Use SUM(CASE WHEN sm.grade = 'F' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)."}]
+
+        # Simple query — no decomposition needed
+        return [{"step": 1, "question": query}]
+
     async def _get_system_prompt(self, linked_schema_text: str) -> str:
-        """Build system prompt with linked schema injected."""
-        # Try loading from prompts.db first
+        """
+        Build the full system prompt by combining:
+        1. Dynamic schema (if USE_DYNAMIC_SCHEMA) or static linked schema
+        2. Formula reference
+        3. Domain hints
+        4. Chain-of-thought instructions
+        """
+        # Determine schema text
+        schema_text = linked_schema_text
+        if settings.USE_DYNAMIC_SCHEMA:
+            try:
+                from core.schema_reader import schema_reader
+                schema = await schema_reader.read_schema()
+                schema_text = schema_reader.build_prompt_schema(schema)
+            except Exception as exc:
+                logger.warning("Dynamic schema read failed, using static: %s", exc)
+
+        # Try loading base prompt from prompts.db
+        base_prompt = None
         try:
             from db.sqlite_client import fetch_one
             row = await fetch_one(
@@ -620,18 +708,26 @@ class SQLPipeline:
                 ("sql_generator", "system"),
             )
             if row and row.get("content"):
-                template = row["content"]
-                if "{linked_schema}" in template:
-                    return template.format(linked_schema=linked_schema_text)
-                return template
+                base_prompt = row["content"]
+                if "{linked_schema}" in base_prompt:
+                    base_prompt = base_prompt.format(linked_schema=schema_text)
         except Exception as exc:
             logger.warning("Could not load sql_generator prompt from DB: %s", exc)
 
-        return SQL_GENERATOR_SYSTEM_PROMPT.format(linked_schema=linked_schema_text)
+        if not base_prompt:
+            base_prompt = SQL_GENERATOR_SYSTEM_PROMPT.format(linked_schema=schema_text)
 
-    def _build_user_prompt(self, query: str, route_result: RouteResult) -> str:
+        # Append formula reference and domain hints
+        return base_prompt + "\n" + FORMULA_REFERENCE + "\n" + DOMAIN_HINTS
+
+    def _build_user_prompt(
+        self, query: str, route_result: RouteResult, hint: str = "",
+    ) -> str:
         """Build user prompt combining the question with router-extracted context."""
         parts = [f"Question: {query}"]
+
+        if hint:
+            parts.append(f"Hint: {hint}")
 
         if route_result.intent:
             parts.append(f"Intent: {route_result.intent}")

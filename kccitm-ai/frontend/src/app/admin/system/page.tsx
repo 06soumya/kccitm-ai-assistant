@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { getSystemHealth, getCacheStats, clearCache, triggerHealing, triggerFAQGen, triggerPromptEvo } from '@/lib/adminApi';
+import { getSystemHealth, getCacheStats, clearCache, triggerHealing, triggerFAQGen, triggerPromptEvo, refreshSchema } from '@/lib/adminApi';
 import ActionButton from '@/components/admin/ActionButton';
 import ConfirmDialog from '@/components/admin/ConfirmDialog';
 
@@ -59,10 +59,11 @@ export default function SystemPage() {
       </div>
       {jobResult && <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">{jobResult}</div>}
 
-      <h2 className="text-sm font-semibold mb-3">Cache</h2>
-      <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-4">
+      <h2 className="text-sm font-semibold mb-3">Cache & Schema</h2>
+      <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-4 flex-wrap">
         <span className="text-sm">{cache?.active_entries || 0} entries · {cache?.total_hits || 0} hits</span>
         <ActionButton label="Clear all cache" variant="danger" onClick={async () => setShowClearConfirm(true)} />
+        <ActionButton label="Refresh DB schema" variant="primary" onClick={async () => { const r = await refreshSchema(); setJobResult(`Schema refreshed: ${r.tables} tables, ${r.foreign_keys} FKs`); }} />
       </div>
       {showClearConfirm && (
         <ConfirmDialog
