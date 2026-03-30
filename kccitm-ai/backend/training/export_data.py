@@ -44,13 +44,40 @@ _SYSTEM_PROMPTS = {
 
 # ── Formatting ────────────────────────────────────────────────────────────────
 
-def format_training_entry(query: str, response: str, category: str) -> dict:
+STAR_SQL_SYSTEM = (
+    "You are a MySQL expert. Generate SQL with step-by-step reasoning. "
+    "Think through the problem, then write the SQL query."
+)
+
+
+def format_training_entry(query: str, response: str, category: str, source: str = "") -> dict:
     """
     Format a Q&A pair into the Qwen chat-template messages format.
+
+    For STaR-SQL entries, the response is a JSON blob containing
+    reasoning_chain + correct_sql — we unpack it into the proper format.
 
     Returns:
         {"messages": [{"role": "system", ...}, {"role": "user", ...}, {"role": "assistant", ...}]}
     """
+    # Check if this is a STaR entry (response is JSON with reasoning_chain)
+    if source and source.startswith("star_"):
+        try:
+            data = json.loads(response)
+            reasoning = data.get("reasoning_chain", "")
+            correct_sql = data.get("correct_sql", "")
+            if reasoning and correct_sql:
+                assistant_content = f"{reasoning}\n\nSQL: {correct_sql}"
+                return {
+                    "messages": [
+                        {"role": "system", "content": STAR_SQL_SYSTEM},
+                        {"role": "user", "content": f"Question: {query}"},
+                        {"role": "assistant", "content": assistant_content},
+                    ]
+                }
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     system = _SYSTEM_PROMPTS.get(category, RESPONSE_SYSTEM)
     return {
         "messages": [
@@ -123,6 +150,7 @@ async def export(
                     query=entry["query"] or "",
                     response=entry["response"] or "",
                     category=cat,
+                    source=entry.get("source", ""),
                 )
                 f.write(json.dumps(formatted, ensure_ascii=False) + "\n")
         stats[filename] = len(entries)
@@ -135,7 +163,8 @@ async def export(
         for cat, entries in by_category.items():
             for entry in entries:
                 formatted = format_training_entry(
-                    entry["query"] or "", entry["response"] or "", cat
+                    entry["query"] or "", entry["response"] or "", cat,
+                    source=entry.get("source", ""),
                 )
                 f.write(json.dumps(formatted, ensure_ascii=False) + "\n")
     stats["combined.jsonl"] = total

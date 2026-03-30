@@ -182,6 +182,20 @@ async def submit_feedback(
     if req.chunks_used:
         background_tasks.add_task(update_chunk_analytics, req.chunks_used)
 
+    # 7. STaR-SQL: auto-collect training data from successful SQL queries
+    if req.rating >= 4 and req.route_used and "SQL" in req.route_used.upper() and req.query_text:
+        async def _star_collect():
+            try:
+                from adaptive.star_sql import StarSQLTrainer
+                from core.llm_client import OllamaClient
+                star = StarSQLTrainer(OllamaClient())
+                sql_used = req.sql_generated or ""
+                if sql_used:
+                    await star.process_success(query=req.query_text, sql=sql_used)
+            except Exception as exc:
+                logger.warning("STaR success collection failed: %s", exc)
+        background_tasks.add_task(_star_collect)
+
     return FeedbackResponse(
         feedback_id=feedback_id,
         quality_score=quality_score,

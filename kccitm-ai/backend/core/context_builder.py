@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class ContextBuilder:
     """
-    Manages the LLM context window budget (32K tokens for llama3.2).
+    Manages the LLM context window budget (32K tokens for qwen2.5:7b-instruct).
 
     Budget allocation:
     - System prompt:     ~800 tokens

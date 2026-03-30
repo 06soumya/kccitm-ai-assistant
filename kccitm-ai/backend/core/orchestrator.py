@@ -547,55 +547,117 @@ class Orchestrator:
 
     # ── Student lookup helpers ─────────────────────────────────────────────────
 
+    # Words that signal an analytical/aggregate query — NEVER a student lookup
+    _ANALYTICAL_SIGNALS = {
+        "how many", "count", "total", "average", "avg", "mean",
+        "top", "bottom", "rank", "ranking", "list all", "show all",
+        "compare", "comparison", "versus", "vs",
+        "percentage", "percent", "rate", "rates",
+        "highest", "lowest", "best", "worst", "most", "least",
+        "which branch", "which subject", "which semester", "which batch",
+        "what percentage", "what is the", "what are the",
+        "pass rate", "fail rate", "grade distribution",
+        "subjects where", "students who", "students whose", "students with",
+        "how did", "how does", "how is",
+        "semester wise", "branch wise", "gender wise", "batch wise", "subject wise",
+        "improved", "dropped", "trend", "change", "across",
+        "more than", "less than", "greater than", "above", "below",
+        "sgpa", "cgpa", "gpa", "back paper",
+    }
+
     def _detect_student_lookup(
         self, query: str, chat_history: list[dict] | None = None,
     ) -> dict | None:
         """Detect if query is a student lookup. Returns dict or None."""
         q = query.strip()
+        q_lower = q.lower()
 
-        # Selection number (user picked from options list)
+        # ── Step 0: BAIL OUT if this is an analytical query ──
+        # This is the most important check — prevents "how many students"
+        # from being treated as a name search.
+        if any(signal in q_lower for signal in self._ANALYTICAL_SIGNALS):
+            return None
+
+        # ── Step 1: Selection number (user picked from options list) ──
         if q.isdigit() and 1 <= int(q) <= 9 and chat_history:
             for msg in reversed(chat_history or []):
                 if msg.get("role") == "assistant" and "Reply with the number" in msg.get("content", ""):
                     return {"type": "selection", "identifier": q}
 
-        # Roll number (13 digits anywhere in query)
+        # ── Step 2: Roll number (13 digits anywhere in query) ──
         roll_match = re.search(r"\b(\d{13})\b", q)
         if roll_match:
             return {"type": "roll_no", "identifier": roll_match.group(1)}
 
-        # Batch year — only for simple batch listing, not analytical queries
-        # Skip if query contains analytical keywords like compare, percentage, rate, average, etc.
-        batch_match = re.search(r"\bbatch\s*(\d{4})\b", q, re.IGNORECASE)
-        if batch_match:
-            analytical_words = {"compare", "percentage", "percent", "rate", "average", "avg",
-                                "top", "bottom", "rank", "count", "how many", "total", "between",
-                                "highest", "lowest", "best", "worst", "subject", "grade", "fail",
-                                "pass", "improve", "trend", "sgpa", "cgpa", "vs"}
-            q_lower = q.lower()
-            if not any(w in q_lower for w in analytical_words):
-                return {"type": "batch", "identifier": batch_match.group(1)}
-
-        # Name-based triggers
+        # ── Step 3: Explicit name triggers ──
+        # These patterns strongly indicate a student lookup
         triggers = [
             "tell me about", "show results for", "results of", "details of",
             "results for", "about student", "student profile", "profile of",
-            "marks of", "performance of", "show me",
+            "marks of", "performance of",
+            "show me the result for", "show me the results for",
+            "show me the marks for", "show me the details for",
+            "show me result for", "show me results for",
         ]
-        q_lower = q.lower()
         for trigger in triggers:
             if q_lower.startswith(trigger):
-                name = q[len(trigger):].strip().strip("?.,")
-                if name and len(name) > 2:
+                name = self._extract_name_after_trigger(q, trigger)
+                if name:
                     return {"type": "name", "identifier": name}
 
-        # Direct name (2-4 words, each starting uppercase, no common query words)
-        words = q.split()
-        skip_words = {"how", "what", "which", "top", "list", "show", "compare", "average", "count"}
-        if 2 <= len(words) <= 4 and words[0].lower() not in skip_words:
-            if all(w[0].isupper() for w in words if w):
-                return {"type": "name", "identifier": q}
+        # ── Step 4: "[Name] result/marks/batch" pattern ──
+        name = self._extract_name_from_context(q, q_lower)
+        if name:
+            return {"type": "name", "identifier": name}
 
+        # ── Step 5: Bare name (2-3 capitalized words, nothing else) ──
+        # Only if the query is short and looks like just a name
+        words = q.split()
+        if 2 <= len(words) <= 3 and all(w[0].isupper() and w.isalpha() for w in words):
+            return {"type": "name", "identifier": q}
+
+        # ── Step 6: Batch year (only if nothing else matched) ──
+        batch_match = re.search(r"\bbatch\s*(\d{4})\b", q, re.IGNORECASE)
+        if batch_match:
+            return {"type": "batch", "identifier": batch_match.group(1)}
+
+        return None
+
+    @staticmethod
+    def _extract_name_after_trigger(q: str, trigger: str) -> str | None:
+        """Extract name from 'tell me about [name]' style queries."""
+        # Get text after the trigger
+        remainder = q[len(trigger):].strip().strip("?.,!:;")
+        # Strip "from batch YYYY"
+        remainder = re.sub(r"\s*(?:from\s+)?batch\s*\d{4}\s*$", "", remainder, flags=re.IGNORECASE).strip()
+        # Strip trailing noise like "result", "results", "in semester 4"
+        remainder = re.sub(r"\s+(?:result|results|in\s+semester\s+\d+)\s*$", "", remainder, flags=re.IGNORECASE).strip()
+        if remainder and len(remainder) >= 3 and not remainder[0].isdigit():
+            return remainder
+        return None
+
+    @staticmethod
+    def _extract_name_from_context(q: str, q_lower: str) -> str | None:
+        """
+        Extract name from patterns like:
+          - "soumya sukriti result from batch 2024"
+          - "bipasa sarkar batch 2023"
+          - "show me result for aakash singh"
+        """
+        # Pattern: [Name] + context word (result, batch, marks, semester, etc.)
+        match = re.match(
+            r"^(?:show\s+me\s+(?:the\s+)?(?:result|marks|details)\s+(?:for|of)\s+)?"
+            r"([A-Za-z]+(?: [A-Za-z]+){1,3})"
+            r"(?:\s*'s)?"
+            r"\s+(?:result|results|marks|batch|semester|from|details|performance|profile)",
+            q, re.IGNORECASE,
+        )
+        if match:
+            name = match.group(1).strip()
+            # Make sure it's not a common phrase
+            common_starts = {"how many", "what is", "which are", "show all", "list all", "the best", "the worst"}
+            if name.lower() not in common_starts and len(name) >= 3:
+                return name
         return None
 
     def _format_student_options(self, students: list[dict]) -> str:

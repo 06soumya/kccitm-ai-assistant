@@ -1,7 +1,7 @@
 """
 SQL Pipeline end-to-end test suite.
 
-Tests against live MySQL + Ollama (llama3.2:latest).
+Tests against live MySQL + Ollama (kccitm-assistant / qwen2.5:7b-instruct).
 Each test calls the LLM to generate SQL, then executes against the DB.
 
 Run:
@@ -10,7 +10,7 @@ Run:
 
 Requirements:
     - MySQL running with kccitm database populated (run ingestion/etl.py first)
-    - Ollama running with llama3.2:latest
+    - Ollama running with kccitm-assistant (qwen2.5:7b-instruct, 7.6B Q4_K_M)
 """
 
 import asyncio

@@ -259,7 +259,7 @@ subject_marks: ('2104920100002', 1, 'KAS103T', 'Engineering Physics', 'Theory', 
 11. Use COALESCE() for nullable columns (internal_marks, external_marks, total_marks).
 12. For subject search, use LIKE: WHERE sm.subject_name LIKE '%%Mathematics%%'
     Or exact code: WHERE sm.subject_code = 'KCS503'
-13. When query asks for "all semesters" or "across semesters", do NOT filter by semester.
+13. CRITICAL: Only filter by semester if the user explicitly mentions a semester number (e.g. "in semester 3", "sem 4"). If no semester is mentioned, calculate across ALL semesters. Do NOT add a semester filter on your own. "average SGPA of batch 2021" means ALL semesters.
 14. When joining all 3 tables, use:
     FROM students s
     JOIN semester_results sr ON s.roll_no = sr.roll_no
@@ -272,6 +272,8 @@ subject_marks: ('2104920100002', 1, 'KAS103T', 'Engineering Physics', 'Theory', 
 19. For "students who passed ALL semesters", use:
     GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status != 'PASS' THEN 1 ELSE 0 END) = 0
 20. For "SGPA improved every semester", compare each semester's SGPA with the previous one.
+21. For "toppers" or "best students" queries: use CGPA = ROUND(AVG(sr.sgpa), 2) across all semesters, GROUP BY s.roll_no, ORDER BY cgpa DESC. Include batch years using LEFT(s.roll_no, 2) to show which batch they belong to. For "toppers per year/batch", add GROUP BY batch prefix.
+22. For "last N years" queries: filter by roll_no prefix. Last 5 years from 2025 = batches 21, 22, 23, 24, 25. Use WHERE s.roll_no LIKE '21%%' OR s.roll_no LIKE '22%%' OR ... etc.
 
 === CHAIN OF THOUGHT (you MUST follow this) ===
 Before writing SQL, think through these steps:

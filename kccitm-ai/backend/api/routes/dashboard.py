@@ -325,6 +325,24 @@ async def approve_healing(
         except Exception as exc:
             logger.warning("Training data log failed: %s", exc)
 
+        # 5. STaR-SQL: generate rationalized training data from the approved fix
+        try:
+            from adaptive.star_sql import StarSQLTrainer
+            from core.llm_client import OllamaClient
+
+            star = StarSQLTrainer(OllamaClient())
+            correct_sql = star._extract_sql_from_fix(fix.get("fix_details") or fix.get("change_reason", ""))
+            if correct_sql and query_text:
+                cid = await star.process_failure(
+                    query=query_text,
+                    correct_sql=correct_sql,
+                    feedback_text=fix.get("change_reason", ""),
+                )
+                if cid:
+                    actions_taken.append("STaR rationalization created")
+        except Exception as exc:
+            logger.warning("STaR rationalization from healing failed: %s", exc)
+
     return {"message": f"Fix approved — {', '.join(actions_taken)}", "id": fix_id}
 
 
@@ -379,3 +397,54 @@ async def refresh_schema(_: TokenData = Depends(require_admin)):
         "foreign_keys": len(schema["foreign_keys"]),
         "row_counts": schema["row_counts"],
     }
+
+
+# ── STaR-SQL Training Endpoints ──────────────────────────────────────────────
+
+@router.get("/dashboard/training/star-stats")
+async def star_training_stats(_: TokenData = Depends(require_admin)):
+    """Get STaR-SQL training data statistics."""
+    from adaptive.star_sql import StarSQLTrainer
+    from core.llm_client import OllamaClient
+
+    star = StarSQLTrainer(OllamaClient())
+    return await star.get_training_stats()
+
+
+@router.post("/dashboard/training/rationalize")
+async def manual_rationalize(
+    body: dict,
+    _: TokenData = Depends(require_admin),
+):
+    """Manually provide correct SQL for a failed query and generate training data."""
+    query = body.get("query", "")
+    correct_sql = body.get("correct_sql", "")
+
+    if not query or not correct_sql:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="query and correct_sql required")
+
+    from adaptive.star_sql import StarSQLTrainer
+    from core.llm_client import OllamaClient
+
+    star = StarSQLTrainer(OllamaClient())
+    candidate_id = await star.process_failure(query=query, correct_sql=correct_sql)
+
+    if candidate_id:
+        stats = await star.get_training_stats()
+        return {"success": True, "candidate_id": candidate_id, "stats": stats}
+
+    from fastapi import HTTPException
+    raise HTTPException(status_code=500, detail="Rationalization failed")
+
+
+@router.post("/dashboard/training/batch-rationalize")
+async def batch_rationalize(_: TokenData = Depends(require_admin)):
+    """Process all approved healing fixes into STaR training data."""
+    from adaptive.star_sql import StarSQLTrainer
+    from core.llm_client import OllamaClient
+
+    star = StarSQLTrainer(OllamaClient())
+    results = await star.batch_rationalize_from_healing()
+    stats = await star.get_training_stats()
+    return {"results": results, "stats": stats}
