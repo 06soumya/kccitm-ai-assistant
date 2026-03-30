@@ -62,6 +62,7 @@ class OllamaClient:
         max_tokens: int = None,
         format: str = None,
         model: str = None,
+        **kwargs,
     ) -> str:
         """
         Generate a complete response (non-streaming).

@@ -564,10 +564,17 @@ class Orchestrator:
         if roll_match:
             return {"type": "roll_no", "identifier": roll_match.group(1)}
 
-        # Batch year
+        # Batch year — only for simple batch listing, not analytical queries
+        # Skip if query contains analytical keywords like compare, percentage, rate, average, etc.
         batch_match = re.search(r"\bbatch\s*(\d{4})\b", q, re.IGNORECASE)
         if batch_match:
-            return {"type": "batch", "identifier": batch_match.group(1)}
+            analytical_words = {"compare", "percentage", "percent", "rate", "average", "avg",
+                                "top", "bottom", "rank", "count", "how many", "total", "between",
+                                "highest", "lowest", "best", "worst", "subject", "grade", "fail",
+                                "pass", "improve", "trend", "sgpa", "cgpa", "vs"}
+            q_lower = q.lower()
+            if not any(w in q_lower for w in analytical_words):
+                return {"type": "batch", "identifier": batch_match.group(1)}
 
         # Name-based triggers
         triggers = [

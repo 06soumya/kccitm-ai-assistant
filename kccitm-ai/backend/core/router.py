@@ -95,10 +95,14 @@ _SQL_KEYWORDS = {
     "compare", "comparison", "vs", "versus", "pass rate", "fail", "failed",
     "above", "below", "threshold", "cgpa", "sgpa", "grade", "score", "marks",
     "list all", "show all", "topper", "toppers",
+    "improved", "improvement", "every semester", "all semesters", "each semester",
+    "more than", "less than", "greater than", "batch", "branch wise",
+    "gender wise", "semester wise", "subject wise", "pass rates",
+    "grade f", "grade a", "back paper", "subjects where",
 }
 _RAG_KEYWORDS = {
     "tell me about", "describe", "explain", "who is", "struggling",
-    "performing well", "improved", "trend", "why", "how did", "overall",
+    "performing well", "trend", "why", "how did", "overall",
     "qualitative", "context", "background", "profile",
 }
 
@@ -155,6 +159,13 @@ class QueryRouter:
         Returns:
             RouteResult with route, filters, entities, intent, complexity, confidence
         """
+        # Pre-check: force SQL for queries that clearly need database aggregation.
+        # This overrides LLM classification since the small model misroutes these.
+        forced = self._force_sql_check(query)
+        if forced:
+            logger.info("Router forced SQL for query: %s", query[:60])
+            return forced
+
         system_prompt = await self._get_system_prompt()
         user_prompt = self._build_user_prompt(query, chat_history)
 
@@ -172,6 +183,15 @@ class QueryRouter:
             logger.warning("Router LLM call failed (%s) — using keyword fallback", exc)
             result = self._fallback_classify(query)
 
+        # Post-processing: if keywords strongly suggest SQL, override LLM
+        if result.route != "SQL":
+            q_lower = query.lower()
+            sql_hits = sum(1 for kw in _SQL_KEYWORDS if kw in q_lower)
+            rag_hits = sum(1 for kw in _RAG_KEYWORDS if kw in q_lower)
+            if sql_hits >= 2 and sql_hits > rag_hits:
+                logger.info("Router overriding %s → SQL (sql_hits=%d > rag_hits=%d)", result.route, sql_hits, rag_hits)
+                result.route = "SQL"
+
         # Post-processing: regex fallback for subject codes the LLM might miss
         if not result.filters.get("subject_code"):
             subject_match = re.search(r'\b([A-Z]{2,4}\d{3,4}[A-Z]?)\b', query.upper())
@@ -180,6 +200,32 @@ class QueryRouter:
                 result.needs_filter = True
 
         return result
+
+    def _force_sql_check(self, query: str) -> RouteResult | None:
+        """Force SQL route for queries with strong analytical signals."""
+        q = query.lower()
+        # Patterns that are unambiguously SQL / aggregation queries
+        force_patterns = [
+            r"percentage of .+ (passed|failed)",
+            r"compare .+ (batch|branch|semester|gender)",
+            r"(subjects?|courses?) where .+ (more|less|greater|fewer) than",
+            r"students? whose .+ (improved|increased|decreased|dropped)",
+            r"(pass|fail) rates? (between|for|of|across)",
+            r"which (branch|batch|semester|subject) .+ (highest|lowest|most|least|best|worst|average)",
+            r"(how many|count|total) .+ (passed|failed|scored|got)",
+            r"(top|bottom) \d+ .+ (by|in|for|across)",
+            r"(average|mean|median) .+ (sgpa|marks|score|grade)",
+            r"(grade f|grade a|back paper) .+ (more than|less than|percent)",
+        ]
+        for pat in force_patterns:
+            if re.search(pat, q):
+                return RouteResult(
+                    route="SQL",
+                    needs_filter=False,
+                    intent=query,
+                    complexity="complex",
+                    confidence=0.95,
+                )
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

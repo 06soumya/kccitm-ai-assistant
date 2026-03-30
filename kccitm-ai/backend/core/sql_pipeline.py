@@ -1,8 +1,15 @@
 """
 Text-to-SQL pipeline for KCCITM AI Assistant.
 
-Orchestrates: schema-aware prompt → LLM generates SQL → safety validation →
-MySQL execution → formatted results (text + markdown table).
+BIRD-bench inspired upgrades:
+  1. Schema linking — only include relevant tables/columns in the prompt
+  2. Self-correction — retry with error context on failure (max 2 retries)
+  3. Execution verification — sanity-check results before returning
+  4. Chain-of-thought — force step-by-step reasoning before SQL generation
+  5. Database value hints — POSSIBLE VALUES for every enum-like column
+
+Orchestrates: schema linking → CoT prompt → LLM generates SQL → safety validation →
+MySQL execution → self-correction loop → verification → formatted results.
 
 Usage:
     from core.llm_client import OllamaClient
@@ -19,6 +26,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from typing import Optional
 
 import sqlparse
 
@@ -29,62 +37,162 @@ from db.mysql_client import execute_query
 
 logger = logging.getLogger(__name__)
 
-# ── SQL Generator System Prompt ───────────────────────────────────────────────
+
+# ── UPGRADE 1: Schema Linking ────────────────────────────────────────────────
+
+# Full schema definitions per table — used by schema_link() to select relevant parts
+SCHEMA_TABLES = {
+    "students": {
+        "alias": "s",
+        "columns": {
+            "roll_no":     {"type": "VARCHAR(20)", "desc": "Primary key, 13 digits. First 2 digits = batch year (21=2021, 22=2022, 23=2023, 24=2024)"},
+            "name":        {"type": "VARCHAR(255)", "desc": "Always UPPERCASE"},
+            "course":      {"type": "VARCHAR(100)", "desc": "Degree program. POSSIBLE VALUES: 'B.TECH'"},
+            "branch":      {"type": "VARCHAR(200)", "desc": "Full branch name, never abbreviated. POSSIBLE VALUES: 'COMPUTER SCIENCE AND ENGINEERING', 'ELECTRONICS AND COMMUNICATION ENGINEERING', 'MECHANICAL ENGINEERING'"},
+            "enrollment":  {"type": "VARCHAR(50)", "desc": "University enrollment number"},
+            "father_name": {"type": "VARCHAR(255)", "desc": "Father's name, UPPERCASE"},
+            "gender":      {"type": "CHAR(1)", "desc": "POSSIBLE VALUES: 'M', 'F'"},
+        },
+    },
+    "semester_results": {
+        "alias": "sr",
+        "columns": {
+            "id":              {"type": "INT", "desc": "Auto-increment PK"},
+            "roll_no":         {"type": "VARCHAR(20)", "desc": "FK -> students.roll_no"},
+            "semester":        {"type": "INT", "desc": "POSSIBLE VALUES: 1, 2, 3, 4, 5, 6, 7, 8"},
+            "session":         {"type": "VARCHAR(100)", "desc": "Academic session, e.g. '2021-22 (REGULAR)'"},
+            "sgpa":            {"type": "DECIMAL(4,2)", "desc": "0.00 to 10.00. 0.00 = absent/no data"},
+            "total_marks":     {"type": "INT", "desc": "Sum of all subject marks that semester (nullable)"},
+            "result_status":   {"type": "VARCHAR(20)", "desc": "POSSIBLE VALUES: 'PASS', 'CP(0)', 'CP( 0)', 'FAIL'. PASS=cleared all. CP=compartment"},
+            "total_subjects":  {"type": "INT", "desc": "Number of subjects that semester"},
+        },
+    },
+    "subject_marks": {
+        "alias": "sm",
+        "columns": {
+            "id":              {"type": "INT", "desc": "Auto-increment PK"},
+            "roll_no":         {"type": "VARCHAR(20)", "desc": "FK -> students.roll_no"},
+            "semester":        {"type": "INT", "desc": "POSSIBLE VALUES: 1, 2, 3, 4, 5, 6, 7, 8"},
+            "subject_code":    {"type": "VARCHAR(20)", "desc": "University subject code, e.g. 'KCS503', 'KAS101T'"},
+            "subject_name":    {"type": "VARCHAR(200)", "desc": "Full subject name, e.g. 'Database Management System'"},
+            "type":            {"type": "VARCHAR(20)", "desc": "POSSIBLE VALUES: 'Theory', 'Practical', 'CA'"},
+            "internal_marks":  {"type": "INT", "desc": "Sessional/internal marks (nullable). Use COALESCE(sm.internal_marks, 0)"},
+            "external_marks":  {"type": "INT", "desc": "University exam marks (nullable). Use COALESCE(sm.external_marks, 0)"},
+            "grade":           {"type": "VARCHAR(5)", "desc": "POSSIBLE VALUES: 'A+', 'A', 'B+', 'B', 'C', 'D', 'F', '' (empty)"},
+            "back_paper":      {"type": "VARCHAR(10)", "desc": "POSSIBLE VALUES: '--' (no back paper), 'BACK' (has back paper)"},
+        },
+    },
+}
+
+# Keyword → (table, [columns]) mapping for schema linking
+_SCHEMA_LINK_RULES: list[tuple[list[str], str, list[str]]] = [
+    # (keywords, table, columns_to_include)
+    (["sgpa", "gpa", "cgpa"],                          "semester_results", ["roll_no", "semester", "sgpa", "result_status"]),
+    (["marks", "score", "total marks", "scored"],      "subject_marks",    ["roll_no", "semester", "subject_name", "internal_marks", "external_marks", "grade"]),
+    (["marks", "score", "total marks"],                "semester_results", ["roll_no", "semester", "total_marks"]),
+    (["branch", "cse", "ece", "mechanical", "department"], "students",    ["roll_no", "name", "branch"]),
+    (["fail", "pass", "passed", "failed", "result", "compartment", "cp"], "semester_results", ["roll_no", "semester", "result_status", "sgpa"]),
+    (["subject", "code", "course name"],               "subject_marks",    ["roll_no", "semester", "subject_code", "subject_name", "type"]),
+    (["grade", "letter grade"],                         "subject_marks",    ["roll_no", "semester", "subject_name", "grade"]),
+    (["back paper", "back", "backlog"],                 "subject_marks",    ["roll_no", "semester", "subject_name", "back_paper"]),
+    (["gender", "male", "female", "boy", "girl"],       "students",        ["roll_no", "name", "gender"]),
+    (["batch", "year", "2021", "2022", "2023", "2024"], "students",        ["roll_no", "name", "branch"]),
+    (["name", "student name", "called"],                "students",        ["roll_no", "name"]),
+    (["semester", "sem"],                               "semester_results", ["roll_no", "semester", "sgpa", "total_marks", "result_status"]),
+    (["topper", "top", "highest", "best", "rank"],      "semester_results", ["roll_no", "semester", "sgpa", "total_marks"]),
+    (["average", "avg", "mean"],                        "semester_results", ["roll_no", "semester", "sgpa", "total_marks"]),
+    (["percentage", "percent", "%"],                    "semester_results", ["roll_no", "semester", "result_status"]),
+    (["improve", "improvement", "progress", "trend"],   "semester_results", ["roll_no", "semester", "sgpa"]),
+    (["compare", "comparison", "vs", "between"],        "students",        ["roll_no", "name", "branch"]),
+    (["internal", "sessional", "external", "university exam"], "subject_marks", ["roll_no", "semester", "subject_name", "internal_marks", "external_marks"]),
+    (["session", "regular", "back"],                    "semester_results", ["roll_no", "semester", "session"]),
+    (["enrollment", "enroll"],                          "students",        ["roll_no", "name", "enrollment"]),
+    (["father"],                                        "students",        ["roll_no", "name", "father_name"]),
+]
+
+
+def schema_link(query: str) -> dict:
+    """
+    UPGRADE 1: Identify which tables and columns are relevant to the query.
+
+    Returns:
+        {
+            "tables": {"students": ["roll_no", "name", ...], "semester_results": [...], ...},
+            "join_hint": str  # suggested JOIN pattern
+        }
+    """
+    q_lower = query.lower()
+    tables: dict[str, set[str]] = {}
+
+    for keywords, table, columns in _SCHEMA_LINK_RULES:
+        for kw in keywords:
+            if kw in q_lower:
+                if table not in tables:
+                    tables[table] = set()
+                tables[table].update(columns)
+                break  # one keyword match per rule is enough
+
+    # Always include students table for name/roll context
+    if "students" not in tables:
+        tables["students"] = {"roll_no", "name", "branch"}
+
+    # If no semester_results or subject_marks matched, include semester_results as default
+    if "semester_results" not in tables and "subject_marks" not in tables:
+        tables["semester_results"] = {"roll_no", "semester", "sgpa", "total_marks", "result_status"}
+
+    # Build join hint
+    table_names = set(tables.keys())
+    if table_names == {"students"}:
+        join_hint = "FROM students s"
+    elif table_names == {"students", "semester_results"}:
+        join_hint = "FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no"
+    elif table_names == {"students", "subject_marks"}:
+        join_hint = "FROM students s JOIN subject_marks sm ON s.roll_no = sm.roll_no"
+    elif len(table_names) == 3 or ("semester_results" in table_names and "subject_marks" in table_names):
+        tables.setdefault("students", set()).add("roll_no")
+        join_hint = (
+            "FROM students s "
+            "JOIN semester_results sr ON s.roll_no = sr.roll_no "
+            "JOIN subject_marks sm ON s.roll_no = sm.roll_no AND sr.semester = sm.semester"
+        )
+    else:
+        join_hint = "FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no"
+
+    return {
+        "tables": {t: sorted(cols) for t, cols in tables.items()},
+        "join_hint": join_hint,
+    }
+
+
+def _build_linked_schema(linked: dict) -> str:
+    """Format schema_link() output into a prompt-friendly schema description."""
+    lines = []
+    for table_name, columns in linked["tables"].items():
+        table_def = SCHEMA_TABLES[table_name]
+        alias = table_def["alias"]
+        lines.append(f"\nTABLE: {table_name} (alias: {alias})")
+        lines.append(f"{'Column':<20} {'Type':<15} Description")
+        lines.append("-" * 80)
+        for col_name in columns:
+            col = table_def["columns"].get(col_name, {})
+            lines.append(f"{col_name:<20} {col.get('type', '?'):<15} {col.get('desc', '')}")
+    lines.append(f"\nSuggested JOIN: {linked['join_hint']}")
+    return "\n".join(lines)
+
+
+# ── UPGRADE 4 + 5: Chain-of-Thought System Prompt with Value Hints ───────────
 
 SQL_GENERATOR_SYSTEM_PROMPT = """You are a MySQL expert. Generate a SELECT query for any question about student academic data.
 
-=== COMPLETE DATABASE SCHEMA ===
-
-TABLE: students
-| Column      | Type         | Description                    | Example values                           |
-|-------------|--------------|--------------------------------|------------------------------------------|
-| roll_no     | VARCHAR(20)  | Primary key, 13 digits         | '2104920100002'                          |
-|             |              | First 2 digits = batch year    | 21=2021, 22=2022, 23=2023, 24=2024      |
-| name        | VARCHAR(255) | Always UPPERCASE               | 'AAKASH SINGH', 'PRIYA SHARMA'          |
-| course      | VARCHAR(100) | Degree program                 | 'B.TECH' (only value)                   |
-| branch      | VARCHAR(200) | Full branch name, never abbrev | 'COMPUTER SCIENCE AND ENGINEERING'       |
-|             |              |                                | 'ELECTRONICS AND COMMUNICATION ENGINEERING' |
-|             |              |                                | 'MECHANICAL ENGINEERING'                 |
-| enrollment  | VARCHAR(50)  | University enrollment number   | '2021049201002'                          |
-| father_name | VARCHAR(255) | Father's name, UPPERCASE       | 'RAMESH SINGH'                           |
-| gender      | CHAR(1)      | M or F                         | 'M', 'F'                                |
-
-TABLE: semester_results
-| Column         | Type         | Description                    | Example values                    |
-|----------------|--------------|--------------------------------|-----------------------------------|
-| id             | INT          | Auto-increment PK              |                                   |
-| roll_no        | VARCHAR(20)  | FK -> students.roll_no         | '2104920100002'                   |
-| semester       | INT          | 1 through 8                    | 1, 2, 3, 4, 5, 6, 7, 8          |
-| session        | VARCHAR(100) | Academic session               | '2021-22 (REGULAR)', '2023-24 (REGULAR)' |
-| sgpa           | DECIMAL(4,2) | 0.00 to 10.00                  | 8.45, 7.86, 0.00 (absent)        |
-| total_marks    | INT          | Sum of all subject marks       | 719, 668, NULL                    |
-| result_status  | VARCHAR(20)  | Pass/fail indicator            | 'PASS', 'CP(0)', 'CP( 0)', 'FAIL' |
-|                |              | PASS = cleared all subjects    |                                   |
-|                |              | CP(0) = compartment            |                                   |
-| total_subjects | INT          | Number of subjects that sem    | 7, 8                              |
-
-TABLE: subject_marks
-| Column         | Type         | Description                    | Example values                    |
-|----------------|--------------|--------------------------------|-----------------------------------|
-| id             | INT          | Auto-increment PK              |                                   |
-| roll_no        | VARCHAR(20)  | FK -> students.roll_no         | '2104920100002'                   |
-| semester       | INT          | 1 through 8                    | 1, 2, 3                          |
-| subject_code   | VARCHAR(20)  | University subject code        | 'KCS503', 'KAS101T', 'KCS301'   |
-| subject_name   | VARCHAR(200) | Full subject name              | 'Database Management System'      |
-|                |              |                                | 'Engineering Mathematics-I'       |
-|                |              |                                | 'Data Structures'                 |
-| type           | VARCHAR(20)  | Subject category               | 'Theory', 'Practical', 'CA'      |
-| internal_marks | INT          | Sessional/internal (nullable)  | 28, 45, NULL                      |
-| external_marks | INT          | University exam (nullable)     | 43, 70, NULL                      |
-| grade          | VARCHAR(5)   | Letter grade                   | 'A+', 'A', 'B+', 'B', 'C', 'D', 'F', '' |
-| back_paper     | VARCHAR(10)  | Back paper status              | '--' (no back paper), 'BACK'      |
+=== DATABASE SCHEMA (only relevant tables shown) ===
+{linked_schema}
 
 === RELATIONSHIPS ===
 students.roll_no -> semester_results.roll_no (one student -> many semesters)
 students.roll_no -> subject_marks.roll_no (one student -> many subjects)
 semester_results and subject_marks share roll_no + semester
 
-=== SAMPLE DATA (from real database) ===
+=== SAMPLE DATA ===
 students: ('2104920100002', 'AAKASH SINGH', 'B.TECH', 'COMPUTER SCIENCE AND ENGINEERING', 'M')
 semester_results: ('2104920100002', 1, '2021-22 (REGULAR)', 8.45, 719, 'CP(0)', 8)
 subject_marks: ('2104920100002', 1, 'KAS103T', 'Engineering Physics', 'Theory', 45, 70, 'A+', '--')
@@ -120,19 +228,55 @@ subject_marks: ('2104920100002', 1, 'KAS103T', 'Engineering Physics', 'Theory', 
     JOIN subject_marks sm ON s.roll_no = sm.roll_no AND sr.semester = sm.semester
 15. For gender analysis: s.gender = 'M' or s.gender = 'F'
 16. For percentage calculations: ROUND(COUNT(condition) * 100.0 / COUNT(*), 2)
+    For conditional counting use SUM(CASE WHEN condition THEN 1 ELSE 0 END).
 17. For comparisons between groups, use GROUP BY with the grouping column.
+18. SGPA can NEVER exceed 10.0. If you see values > 10, something is wrong.
+19. For "students who passed ALL semesters", use:
+    GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status != 'PASS' THEN 1 ELSE 0 END) = 0
+20. For "SGPA improved every semester", compare each semester's SGPA with the previous one.
 
-=== THINK STEP BY STEP ===
-For any query:
-1. Which tables do I need? (students only? + semester_results? + subject_marks?)
-2. What JOINs? (always ON roll_no, add AND semester = semester for 3-table joins)
-3. What WHERE filters? (semester, branch, name, subject, batch, gender, pass/fail, grade)
-4. Do I need GROUP BY? (averages, counts per group, rankings by category)
-5. What ORDER BY? (DESC for top/best/highest, ASC for bottom/worst/lowest)
-6. What LIMIT? (match the query, default 50)
+=== CHAIN OF THOUGHT (you MUST follow this) ===
+Before writing SQL, think through these steps:
+Step 1: What tables do I need? List them.
+Step 2: What columns does the user want to see? List them.
+Step 3: What are the filter conditions? List them.
+Step 4: Do I need GROUP BY? Why?
+Step 5: What ORDER BY and LIMIT?
+Step 6: Now write the SQL.
+
+Respond with ONLY a JSON object in this exact format:
+{{"thinking": "Step 1: ... Step 2: ... Step 3: ... Step 4: ... Step 5: ... Step 6: ...", "sql": "SELECT ...", "explanation": "one line explaining what this query does"}}"""
+
+
+# Retry prompt template for self-correction (UPGRADE 2)
+SQL_RETRY_PROMPT = """The previous SQL query failed.
+
+Previous SQL: {previous_sql}
+Error: {error_message}
+
+Fix the SQL to resolve this error. Follow the same schema and rules.
+Common fixes:
+- Unknown column: check the schema above for correct column names
+- Syntax error: check MySQL syntax rules
+- No results: try relaxing WHERE conditions
 
 Respond with ONLY a JSON object:
-{"sql": "SELECT ...", "params": [], "explanation": "one line explaining what this query does"}"""
+{{"thinking": "The error was... I need to fix...", "sql": "SELECT ...", "explanation": "fixed query"}}"""
+
+
+# Zero-result retry prompt (UPGRADE 2)
+SQL_ZERO_ROWS_PROMPT = """The previous query returned 0 rows, but the user clearly expects results.
+
+Previous SQL: {previous_sql}
+User question: {original_query}
+
+The query may have been too restrictive. Try:
+- Removing or relaxing one WHERE condition
+- Using LIKE instead of exact match
+- Checking if the column values are correct (see POSSIBLE VALUES in schema)
+
+Respond with ONLY a JSON object:
+{{"thinking": "The query returned no results because... I'll relax...", "sql": "SELECT ...", "explanation": "relaxed query"}}"""
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -151,9 +295,12 @@ class SQLResult:
     formatted_table: str = ""
     error: str = ""
     execution_time_ms: float = 0.0
+    retries_used: int = 0
+    schema_linked: dict = field(default_factory=dict)
+    verification_warnings: list[str] = field(default_factory=list)
 
 
-# ── Safety validator ──────────────────────────────────────────────────────────
+# ── Safety validator ─────────────────────────────────────────────────────────
 
 class SQLValidator:
     """
@@ -237,19 +384,61 @@ class SQLValidator:
         return sql
 
 
-# ── Pipeline ──────────────────────────────────────────────────────────────────
+# ── UPGRADE 3: Execution Verification ────────────────────────────────────────
+
+def verify_results(query: str, sql: str, rows: list[dict]) -> list[str]:
+    """
+    Sanity-check SQL results against the original natural language query.
+    Returns a list of warning strings (empty = all good).
+    """
+    warnings = []
+    q_lower = query.lower()
+    sql_upper = sql.upper()
+
+    # Check: "how many" expects a single count row
+    if ("how many" in q_lower or "count" in q_lower) and len(rows) > 1:
+        if "COUNT" not in sql_upper:
+            warnings.append("Query asks 'how many' but SQL has no COUNT(*). Results may show raw rows instead of a count.")
+
+    # Check: "average" / "avg" expects AVG in SQL
+    if ("average" in q_lower or "avg" in q_lower) and "AVG" not in sql_upper:
+        warnings.append("Query asks for average but SQL has no AVG(). Results may show raw values.")
+
+    # Check: SGPA > 10.0 is impossible
+    for row in rows[:20]:
+        for key, val in row.items():
+            if "sgpa" in key.lower() and isinstance(val, (int, float)) and val > 10.0:
+                warnings.append(f"SGPA value {val} exceeds maximum 10.0 — possible data error or incorrect aggregation.")
+                break
+        else:
+            continue
+        break
+
+    # Check: too many rows without explicit "all" in query
+    if len(rows) > 50 and "all" not in q_lower and "every" not in q_lower:
+        warnings.append(f"Query returned {len(rows)} rows. Consider adding LIMIT if not all rows are needed.")
+
+    return warnings
+
+
+# ── Pipeline ─────────────────────────────────────────────────────────────────
 
 class SQLPipeline:
     """
     Converts natural language queries to SQL, validates, executes, and formats results.
 
-    Pipeline:
-        1. Build a schema-aware prompt with the user's question + router context
-        2. LLM generates SQL + explanation as JSON
-        3. Safety layer validates (SELECT only, no injection, etc.)
-        4. Execute against MySQL with row limit enforcement
-        5. Format results as readable text + markdown table
+    BIRD-bench inspired pipeline:
+        1. Schema linking — identify relevant tables/columns
+        2. Chain-of-thought prompt with value hints
+        3. LLM generates SQL with step-by-step reasoning
+        4. Safety validation (SELECT only, no injection, etc.)
+        5. Execute against MySQL
+        6. Self-correction — retry on error or zero rows (max 2 retries)
+        7. Execution verification — sanity-check results
+        8. Format results as text + markdown table
     """
+
+    MAX_RETRIES = 2
 
     def __init__(self, llm: OllamaClient) -> None:
         self.llm = llm
@@ -313,14 +502,20 @@ class SQLPipeline:
 
     async def run(self, query: str, route_result: RouteResult) -> SQLResult:
         """
-        Full pipeline: NL question → SQL → validate → execute → format.
+        Full BIRD-style pipeline: schema link → CoT generate → validate → execute →
+        self-correct → verify → format.
 
         Never raises — all error paths return SQLResult(success=False, error="...").
         """
-        # Step 1: Generate SQL
-        generated = await self._generate_sql(query, route_result)
+        # UPGRADE 1: Schema linking
+        linked = schema_link(query)
+        linked_schema_text = _build_linked_schema(linked)
+
+        # Step 1: Generate SQL with chain-of-thought
+        generated = await self._generate_sql(query, route_result, linked_schema_text)
         if not generated.success:
             return generated
+        generated.schema_linked = linked
 
         # Step 2: Validate
         validation_error = self._validate_sql(generated.sql)
@@ -329,45 +524,95 @@ class SQLPipeline:
                 success=False,
                 sql=generated.sql,
                 error=f"SQL validation failed: {validation_error}",
+                schema_linked=linked,
             )
 
-        # Step 3: Enforce LIMIT and execute
-        result = await self._execute_sql(generated)
+        # Step 3: Execute with self-correction loop (UPGRADE 2)
+        result = await self._execute_with_retries(
+            generated, query, route_result, linked_schema_text
+        )
         if not result.success:
             return result
+        result.schema_linked = linked
 
-        # Step 4: Format
+        # Step 4: Execution verification (UPGRADE 3)
+        result.verification_warnings = verify_results(query, result.sql, result.rows)
+        if result.verification_warnings:
+            logger.info(
+                "Verification warnings for '%s': %s",
+                query[:50], result.verification_warnings,
+            )
+
+        # Step 5: Format
         result.formatted_text = self._format_as_text(
-            result.rows, result.sql, generated.explanation
+            result.rows, result.sql, generated.explanation, result.verification_warnings
         )
         result.formatted_table = self._format_as_markdown_table(result.rows)
         return result
 
     # ── Internal steps ────────────────────────────────────────────────────────
 
-    async def _generate_sql(self, query: str, route_result: RouteResult) -> SQLResult:
-        """Use LLM to generate SQL from natural language."""
-        system_prompt = await self._get_system_prompt()
-        user_prompt = self._build_user_prompt(query, route_result)
+    async def _generate_sql(
+        self,
+        query: str,
+        route_result: RouteResult,
+        linked_schema_text: str,
+        error_context: Optional[str] = None,
+        previous_sql: Optional[str] = None,
+        temperature: float = 0.05,
+    ) -> SQLResult:
+        """Use LLM to generate SQL from natural language with chain-of-thought."""
+        system_prompt = await self._get_system_prompt(linked_schema_text)
+
+        if error_context and previous_sql:
+            # Self-correction retry prompt
+            user_prompt = SQL_RETRY_PROMPT.format(
+                previous_sql=previous_sql, error_message=error_context
+            )
+        else:
+            user_prompt = self._build_user_prompt(query, route_result)
 
         try:
             response = await self.llm.generate(
                 prompt=user_prompt,
                 system=system_prompt,
-                temperature=0.05,
-                max_tokens=800,
+                temperature=temperature,
+                max_tokens=1000,
                 format="json",
-                options={"temperature": 0.05},
             )
             return self._parse_sql_response(response)
         except Exception as exc:
             return SQLResult(success=False, error=f"SQL generation failed: {exc}")
 
-    async def _get_system_prompt(self) -> str:
-        """Load SQL generator prompt from prompts.db, fallback to hardcoded."""
+    async def _generate_sql_zero_rows(
+        self,
+        query: str,
+        previous_sql: str,
+        linked_schema_text: str,
+    ) -> SQLResult:
+        """Generate a relaxed SQL query after zero rows."""
+        system_prompt = await self._get_system_prompt(linked_schema_text)
+        user_prompt = SQL_ZERO_ROWS_PROMPT.format(
+            previous_sql=previous_sql, original_query=query
+        )
+
+        try:
+            response = await self.llm.generate(
+                prompt=user_prompt,
+                system=system_prompt,
+                temperature=0.01,
+                max_tokens=1000,
+                format="json",
+            )
+            return self._parse_sql_response(response)
+        except Exception as exc:
+            return SQLResult(success=False, error=f"SQL retry generation failed: {exc}")
+
+    async def _get_system_prompt(self, linked_schema_text: str) -> str:
+        """Build system prompt with linked schema injected."""
+        # Try loading from prompts.db first
         try:
             from db.sqlite_client import fetch_one
-            from config import settings
             row = await fetch_one(
                 settings.PROMPTS_DB,
                 "SELECT content FROM prompt_templates "
@@ -375,15 +620,17 @@ class SQLPipeline:
                 ("sql_generator", "system"),
             )
             if row and row.get("content"):
-                return row["content"]
+                template = row["content"]
+                if "{linked_schema}" in template:
+                    return template.format(linked_schema=linked_schema_text)
+                return template
         except Exception as exc:
             logger.warning("Could not load sql_generator prompt from DB: %s", exc)
-        return SQL_GENERATOR_SYSTEM_PROMPT
+
+        return SQL_GENERATOR_SYSTEM_PROMPT.format(linked_schema=linked_schema_text)
 
     def _build_user_prompt(self, query: str, route_result: RouteResult) -> str:
-        """
-        Build user prompt combining the question with router-extracted context.
-        """
+        """Build user prompt combining the question with router-extracted context."""
         parts = [f"Question: {query}"]
 
         if route_result.intent:
@@ -406,9 +653,7 @@ class SQLPipeline:
     def _parse_sql_response(self, response: str) -> SQLResult:
         """
         Parse LLM JSON response into SQLResult.
-
-        Handles: markdown fences, missing keys, malformed JSON.
-        Falls back to regex SQL extraction on complete parse failure.
+        Handles chain-of-thought "thinking" field, markdown fences, missing keys.
         """
         text = self._clean_json(response)
 
@@ -418,11 +663,17 @@ class SQLPipeline:
             if not sql:
                 return SQLResult(success=False, error="LLM returned empty SQL")
             sql = self._strip_sql_comments(sql)
+
+            thinking = str(data.get("thinking", "") or "").strip()
+            explanation = str(data.get("explanation", "") or "").strip()
+            if thinking:
+                logger.debug("CoT thinking: %s", thinking[:200])
+
             return SQLResult(
                 success=True,
                 sql=sql,
                 params=list(data.get("params") or []),
-                explanation=str(data.get("explanation") or "").strip(),
+                explanation=explanation,
             )
         except json.JSONDecodeError:
             # Try to extract SQL via regex
@@ -443,12 +694,106 @@ class SQLPipeline:
     def _validate_sql(self, sql: str) -> str | None:
         return SQLValidator.validate(sql)
 
+    async def _execute_with_retries(
+        self,
+        generated: SQLResult,
+        query: str,
+        route_result: RouteResult,
+        linked_schema_text: str,
+    ) -> SQLResult:
+        """
+        UPGRADE 2: Execute SQL with self-correction on error or zero rows.
+
+        Retry strategy:
+          - On execution error: regenerate with error message at lower temperature
+          - On zero rows (when results expected): regenerate with relaxed filters
+          - Max 2 retries total
+        """
+        current = generated
+        retries = 0
+
+        while retries <= self.MAX_RETRIES:
+            result = await self._execute_sql(current)
+
+            if result.success and result.row_count > 0:
+                result.retries_used = retries
+                return result
+
+            if not result.success and retries < self.MAX_RETRIES:
+                # Execution error — retry with error context
+                logger.info(
+                    "SQL execution failed (retry %d/%d): %s",
+                    retries + 1, self.MAX_RETRIES, result.error[:100],
+                )
+                current = await self._generate_sql(
+                    query, route_result, linked_schema_text,
+                    error_context=result.error,
+                    previous_sql=current.sql,
+                    temperature=0.01,
+                )
+                if not current.success:
+                    return current
+
+                validation_error = self._validate_sql(current.sql)
+                if validation_error:
+                    return SQLResult(
+                        success=False,
+                        sql=current.sql,
+                        error=f"Retry SQL validation failed: {validation_error}",
+                    )
+                retries += 1
+                continue
+
+            if result.success and result.row_count == 0 and retries < self.MAX_RETRIES:
+                # Zero rows — check if query clearly expects results
+                if self._expects_results(query):
+                    logger.info(
+                        "SQL returned 0 rows, query expects results (retry %d/%d)",
+                        retries + 1, self.MAX_RETRIES,
+                    )
+                    current = await self._generate_sql_zero_rows(
+                        query, current.sql, linked_schema_text
+                    )
+                    if not current.success:
+                        return current
+
+                    validation_error = self._validate_sql(current.sql)
+                    if validation_error:
+                        return SQLResult(
+                            success=False,
+                            sql=current.sql,
+                            error=f"Retry SQL validation failed: {validation_error}",
+                        )
+                    retries += 1
+                    continue
+                else:
+                    result.retries_used = retries
+                    return result
+
+            # Out of retries or non-retryable
+            result.retries_used = retries
+            return result
+
+        return result
+
+    @staticmethod
+    def _expects_results(query: str) -> bool:
+        """Heuristic: does this query clearly expect non-empty results?"""
+        q = query.lower()
+        # Questions that could legitimately return 0 rows
+        if any(w in q for w in ["is there", "does", "any", "exist"]):
+            return False
+        # Questions that definitely expect results
+        if any(w in q for w in ["top", "best", "highest", "lowest", "show", "list",
+                                 "find", "get", "which", "who", "compare", "what"]):
+            return True
+        return False
+
     async def _execute_sql(self, generated: SQLResult) -> SQLResult:
         """Execute validated SQL, enforcing LIMIT."""
         sql = SQLValidator.enforce_limit(generated.sql, self.max_rows)
         params = tuple(generated.params) if generated.params else ()
         # Escape literal % signs (e.g. LIKE 'CP%') that are not %s placeholders.
-        # aiomysql interprets bare % as format specifiers; %% → % after formatting.
         sql = re.sub(r"%(?!s\b)", "%%", sql)
 
         try:
@@ -477,7 +822,8 @@ class SQLPipeline:
     # ── Formatters ────────────────────────────────────────────────────────────
 
     def _format_as_text(
-        self, rows: list[dict], sql: str, explanation: str
+        self, rows: list[dict], sql: str, explanation: str,
+        warnings: list[str] = None,
     ) -> str:
         """Format SQL results as human-readable text for LLM context."""
         if not rows:
@@ -486,6 +832,11 @@ class SQLPipeline:
         lines: list[str] = [f"Query returned {len(rows)} row(s)."]
         if explanation:
             lines.append(f"Explanation: {explanation}")
+
+        if warnings:
+            for w in warnings:
+                lines.append(f"Warning: {w}")
+
         lines.append("")
         lines.append("Results:")
 
@@ -540,12 +891,8 @@ class SQLPipeline:
     @staticmethod
     def _strip_sql_comments(sql: str) -> str:
         """Remove SQL comments while preserving -- inside string literals."""
-        # Remove block comments /* ... */
         sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
-        # Remove inline comments — only -- preceded by whitespace or at line start
-        # This avoids stripping '--' inside string literals like back_paper != '--'
         sql = re.sub(r"(?:^|\s)--[^\n]*", " ", sql, flags=re.MULTILINE)
-        # Collapse extra whitespace
         sql = re.sub(r"[ \t]+", " ", sql).strip()
         return sql
 
@@ -560,7 +907,7 @@ class SQLPipeline:
         return text.strip()
 
 
-# ── Prompt update helper ──────────────────────────────────────────────────────
+# ── Prompt update helper ─────────────────────────────────────────────────────
 
 async def update_sql_generator_prompt() -> None:
     """
