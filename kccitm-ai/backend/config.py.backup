@@ -77,12 +77,6 @@ class Settings(BaseSettings):
     USE_DYNAMIC_SCHEMA: bool = True   # True = auto-discover schema; False = hardcoded
     LOGICCAT_MODE: bool = False       # True only for benchmark evaluation (extra retries, extended prompts)
 
-    # ── OpenAI fallback (disabled by default — zero code paths change when off) ──
-    OPENAI_API_KEY: str = ""          # Empty = disabled. Set in .env to enable.
-    OPENAI_MODEL: str = "gpt-4o-mini" # Cheapest option (~$0.15/1M input tokens)
-    OPENAI_ENABLED: bool = False      # Master switch. Must be True AND key set.
-    OPENAI_MAX_TOKENS: int = 500
-
 
 # Singleton instance — import this everywhere
 settings = Settings()

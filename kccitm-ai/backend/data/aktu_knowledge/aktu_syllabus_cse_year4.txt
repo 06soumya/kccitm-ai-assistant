@@ -1,0 +1,830 @@
+COMPUTER SCIENCE AND ENGINEERING/CS
+DR. A.P.J. ABDUL KALAM TECHNICAL
+UNIVERSITY, UTTAR PRADESH, LUCKNOW
+EVALUATION SCHEME & SYLLABUS
+FOR
+B. TECH. FOURTH (IV) YEAR
+(COMPUTER SCIENCE AND ENGINEERING/CS)
+AS PER
+AICTE MODEL CURRICULUM
+[Effective from the Session: 2021-22]
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 1
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+B.TECH
+(COMPUTER SCIENCE & ENGINEERING/CS) CURRICULUM STRUCTURE
+SEMESTER- VII
+End
+Subject Periods Evaluation Scheme
+Sl. Semester
+Subject Total Credit
+No.
+Codes L T P CT TA Total PS TE PE
+1 KHU701/KHU702 HSMC -1 / HSMC-2 3 0 0 30 20 50 100 150 3
+2 KCS07X Departmental Elective-IV 3 0 0 30 20 50 100 150 3
+3 KCS07X Departmental Elective-V 3 0 0 30 20 50 100 150 3
+4 KOE07X Open Elective-II 3 0 0 30 20 50 100 150 3
+The Department may conduct one Lab
+of either of the two Electives (4 or 5)
+based on the elective chosen for the
+5 KCS751A curriculum. The Department shall on 0 0 2 25 25 50 1
+its own prepare complete list of
+practical for the Lab and arrange for
+proper setup and conduct accordingly.
+Mini Project or Internship
+6 KCS752 0 0 2 50 50 1
+Assessment*
+7 KCS753 Project 0 0 8 50 100 150 4
+8 MOOCs (Essential for Hons. Degree)
+Total 12 0 12 850 18
+*The Mini Project or internship (4 - 6 weeks) conducted during summer break after VI semester and will be assessed during VII semester.
+SEMESTER- VIII
+End
+Subject Periods Evaluation Scheme
+Sl. Semester
+Subject Total Credit
+No.
+Codes L T P CT TA Total PS TE PE
+1 KHU801/KHU802 HSMC-2#/HSMC-1# 3 0 0 30 20 50 100 150 3
+2 KOE08X Open Elective-III 3 0 0 30 20 50 100 150 3
+3 KOE08X Open Elective-IV 3 0 0 30 20 50 100 150 3
+4 KCS851 Project 0 0 18 100 300 400 9
+5 MOOCs (Essential for Hons. Degree)
+Total 9 0 18 850 18
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 2
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Departmental Elective-IV
+1. KCS071 Artificial Intelligence
+2. KCS072 Natural language processing
+3. KCS073 High Performance Computing
+4. KCS074 Cryptography and Network Security
+5. KCS075 Design & Development of Applications
+6. KCS076 Software Testing
+7. KCS077 Distributed Systems
+Departmental Elective-V
+1. KCS078 Deep Learning
+2. KCS079 Service Oriented Architecture
+3. KCS710 Quantum Computing
+4. KCS711 Mobile Computing
+5. KCS712 Internet of Things
+6. KCS713 Cloud Computing
+7. KCS714 Blockchain Architecture Design
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 3
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+B.TECH. (CSE/CS)
+SEVENT SEMESTER (DETAILED SYLLABUS)
+Artificial Intelligence (KCS071)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Understand the basics of the theory and practice of Artificial Intelligence as a discipline and K
+CO 1 2
+about intelligent agents.
+CO 2 Understand search techniques and gaming theory. K , K
+2 3
+The student will learn to apply knowledge representation techniques and problem solving K , K
+CO 3 3 4
+strategies to common AI applications.
+CO 4 Student should be aware of techniques used for classification and clustering. K , K
+2 3
+CO 5 Student should aware of basics of pattern recognition and steps required for it. K , K
+2 4
+DETAILED SYLLABUS 3‐0‐0
+Proposed
+Unit Topic
+Lecture
+INTRODUCTION :
+I Introduction–Definition – Future of Artificial Intelligence – Characteristics of Intelligent Agents– 08
+Typical Intelligent Agents – Problem Solving Approach to Typical AI problems.
+PROBLEM SOLVING METHODS:
+Problem solving Methods – Search Strategies- Uninformed – Informed – Heuristics – Local Search
+II Algorithms and Optimization Problems – Searching with Partial Observations – Constraint 08
+Satisfaction Problems – Constraint Propagation – Backtracking Search – Game Playing – Optimal
+Decisions in Games – Alpha – Beta Pruning – Stochastic Games
+KNOWLEDGE REPRESENTATION:
+First Order Predicate Logic – Prolog Programming – Unification – Forward Chaining-Backward
+III Chaining – Resolution – Knowledge Representation – Ontological Engineering-Categories and 08
+Objects – Events – Mental Events and Mental Objects – Reasoning Systems for Categories –
+Reasoning with Default Information
+SOFTWARE AGENTS:
+IV Architecture for Intelligent Agents – Agent communication – Negotiation and Bargaining – 08
+Argumentation among Agents – Trust and Reputation in Multi-agent systems.
+APPLICATIONS:
+AI applications – Language Models – Information Retrieval- Information Extraction – Natural
+V 08
+Language Processing – Machine Translation – Speech Recognition – Robot – Hardware –
+Perception – Planning – Moving
+Text books:
+1. S. Russell and P. Norvig, “Artificial Intelligence: A Modern Approach‖, Prentice Hall, Third Edition, 2009.
+2. I. Bratko, “Prolog: Programming for Artificial Intelligence”, Fourth edition, Addison-Wesley Educational Publishers
+Inc., 2011.
+3. M. Tim Jones, ―Artificial Intelligence: A Systems Approach(Computer Science)‖, Jones and Bartlett Publishers,
+Inc.First Edition, 2008
+4. Nils J. Nilsson, ―The Quest for Artificial Intelligence‖, Cambridge University Press, 2009.
+5. William F. Clocksin and Christopher S. Mellish,‖ Programming in Prolog: Using the ISO Standard‖, Fifth Edition,
+Springer, 2003.
+6. Gerhard Weiss, ―Multi Agent Systems‖, Second Edition, MIT Press, 2013.
+7. David L. Poole and Alan K. Mackworth, ―Artificial Intelligence: Foundations of Computational Agents‖, Cambridge
+University Press, 2010.
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 4
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Natural Language Processing (KC072)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able :
+CO 1 To learn the fundamentals of natural language processing K , K
+1 2
+CO 2 To understand the use of CFG and PCFG in NLP K , K
+1 2
+CO 3 To understand the role of semantics of sentences and pragmatic K
+2
+CO 4 To Introduce Speech Production And Related Parameters Of Speech. K , K
+1 2
+To Show The Computation And Use Of Techniques Such As Short Time Fourier Transform,
+CO 5 K K
+Linear Predictive Coefficients And Other Coefficients In The Analysis Of Speech. 3, 4
+DETAILED SYLLABUS 3-0-0
+Proposed
+Unit Topic
+Lecture
+INTRODUCTION: Origins and challenges of NLP – Language Modeling: Grammar-based LM,
+Statistical LM – Regular Expressions, Finite-State Automata – English Morphology, Transducers
+for lexicon and rules, Tokenization, Detecting and Correcting Spelling Errors, Minimum Edit
+Distance 08
+I
+WORD LEVEL ANALYSIS : Unsmoothed N-grams, Evaluating N-grams, Smoothing,
+Interpolation and Backoff – Word Classes, Part-of-Speech Tagging, Rule-based, Stochastic and
+Transformation-based tagging, Issues in PoS tagging – Hidden Markov and Maximum Entropy
+models.
+SYNTACTIC ANALYSIS: Context Free Grammars, Grammar rules for English, Treebanks,
+Normal Forms for grammar – Dependency Grammar – Syntactic Parsing, Ambiguity, Dynamic 08
+II
+Programming parsing – Shallow parsing – Probabilistic CFG, Probabilistic CYK, Probabilistic
+Lexicalized CFGs – Feature structures, Unification of feature structures.
+SEMANTICS AND PRAGMATICS:
+Requirements for representation, First-Order Logic, Description Logics – Syntax-Driven Semantic
+08
+III analysis, Semantic attachments – Word Senses, Relations between Senses, Thematic Roles,
+selectional restrictions – Word Sense Disambiguation, WSD using Supervised, Dictionary &
+Thesaurus, Bootstrapping methods – Word Similarity using Thesaurus and Distributional methods.
+BASIC CONCEPTS of Speech Processing : Speech Fundamentals: Articulatory Phonetics –
+Production And Classification Of Speech Sounds; Acoustic Phonetics – Acoustics Of Speech 08
+IV
+Production; Review Of Digital Signal Processing Concepts; Short-Time Fourier Transform, Filter-
+Bank And LPC Methods.
+SPEECH-ANALYSIS: Features, Feature Extraction And Pattern Comparison Techniques: Speech
+Distortion Measures– Mathematical And Perceptual – Log–Spectral Distance, Cepstral Distances,
+Weighted Cepstral Distances And Filtering, Likelihood Distortions, Spectral Distortion Using A
+Warped Frequency Scale, LPC, PLP And MFCC Coefficients, Time Alignment And Normalization
+V
+– Dynamic Time Warping, Multiple Time – Alignment Paths. 08
+SPEECH MODELING : Hidden Markov Models: Markov Processes, HMMs – Evaluation,
+Optimal State Sequence – Viterbi Search, Baum-Welch Parameter Re-Estimation, Implementation
+Issues.
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 5
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Text books:
+1. Daniel Jurafsky, James H. Martin―Speech and Language Processing: An Introduction to Natural Language
+Processing, Computational Linguistics and Speech, Pearson Publication, 2014.
+2. Steven Bird, Ewan Klein and Edward Loper, ―Natural Language Processing with Python, First Edition, OReilly
+Media, 2009.
+3. Lawrence Rabiner And Biing-Hwang Juang, “Fundamentals Of Speech Recognition”, Pearson Education, 2003.
+4. Daniel Jurafsky And James H Martin, “Speech And Language Processing – An Introduction To Natural Language
+Processing, Computational Linguistics, And Speech Recognition”, Pearson Education, 2002.
+5. Frederick Jelinek, “Statistical Methods Of Speech Recognition”, MIT Press, 1997.
+6. Breck Baldwin, ―Language Processing with Java and LingPipe Cookbook, Atlantic Publisher, 2015
+7. Richard M Reese, ―Natural Language Processing with Java, OReilly Media, 2015.
+8. Nitin Indurkhya and Fred J. Damerau, ―Handbook of Natural Language Processing, Second Edition, Chapman
+and Hall/CRC Press, 2010.
+9. Tanveer Siddiqui, U.S. Tiwary, ―Natural Language Processing and Information Retrieval, Oxford University
+Press, 2008.
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 6
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+High Performance Computing (KCS073)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Able to understand the basic concept of Computer architecture and Modern Processor K2
+CO 1
+CO 2 Able to understand the basic concepts of access optimization and parallel computers K2, K3
+Able to describe different parallel processing platforms involved in achieving high K3 , K4
+CO 3
+performance computing
+CO 4 Develop efficient and high performance parallel programming. K2 , K3
+CO 5 Able to learn parallel programming using message passing paradigm. K2 , K4
+DETAILED SYLLABUS 3‐0‐0
+Proposed
+Unit Topic
+Lecture
+Overview of Grid Computing Technology, History of Grid Computing, High Performance
+Computing, Cluster Computing. Peer‐to‐Peer Computing, Internet Computing, Grid Computing
+08
+Model and Protocols, Types of Grids: Desktop Grids, Cluster Grids, Data Grids, High‐
+I
+Performance Grids, Applications and Architectures of High Performance Grids, High Performance
+Application Development Environment.
+II Open Grid Services Architecture: Introduction, Requirements, Capabilities, Security 08
+Considerations, GLOBUS Toolkit
+Overview of Cluster Computing: Cluster Computer and its Architecture, Clusters Classifications,
+III 08
+Components for Clusters, Cluster Middleware and SSI, Resource Management and Scheduling,
+Programming, Environments and Tools, Cluster Applications, Cluster Systems,
+IV Beowulf Cluster: The Beowulf Model, Application Domains, Beowulf System Architecture, 08
+Software Practices, Parallel Programming with MPL, Parallel Virtual Machine (PVM).
+Overview of Cloud Computing: Types of Cloud, Cyber infrastructure, Service Oriented
+V 08
+Architecture Cloud Computing Components: Infrastructure, Storage, Platform, Application,
+Services, Clients, Cloud Computing Architecture.
+Text books:
+1. Laurence T.Yang, Minyi Guo – High Performance Computing Paradigm and Infrastructure John Wiley
+2. Ahmar Abbas, “Grid Computing: Practical Guide to Technology & Applications”, Firewall Media, 2004.
+3. Joshy Joseph and Craig Fellenstein , “Grid Computing” Pearson Education, 2004.
+4. lan Foster, et al.,“The Open Grid Services Architecture”, Version 1.5 (GFD.80). Open Grid Forum, 2006.
+5. RajkumarBuyya. High Performance Cluster Computing: Architectures and Systems. PrenticeHall India, 1999.
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 7
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Cryptography & Network Security ( KCS074)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Classify the symmetric encryption techniques and Illustrate various Public key cryptographic K2 , K3
+CO 1
+techniques.
+Understand security protocols for protecting data on networks and be able to digitally sign K1 , K2
+CO 2
+emails and files.
+Understand vulnerability assessments and the weakness of using passwords for authentication K4
+CO 3
+Be able to perform simple vulnerability assessments and password audits K3
+CO 4
+Summarize the intrusion detection and its solutions to overcome the attacks. K2
+CO 5
+3‐0‐0
+DETAILED SYLLABUS
+Unit Proposed
+Topic
+Lecture
+Introduction to security attacks, services and mechanism, Classical encryption techniques-
+substitution ciphers and transposition ciphers, cryptanalysis, steganography, Stream and block
+I 08
+ciphers. Modern Block Ciphers: Block ciphers principles, Shannon’s theory of confusion and
+diffusion, fiestal structure, Data encryption standard(DES), Strength of DES, Idea of differential
+cryptanalysis, block cipher modes of operations, Triple DES
+Introduction to group, field, finite field of the form GF(p), modular arithmetic, prime and relative
+prime numbers, Extended Euclidean Algorithm, Advanced Encryption Standard (AES) encryption
+II 08
+and decryptionFermat’s and Euler’s theorem, Primarily testing, Chinese Remainder theorem,
+Discrete Logarithmic Problem,Principals of public key crypto systems, RSA algorithm, security of
+RSA
+Message Authentication Codes: Authentication requirements, authentication functions, message
+authentication code, hash functions, birthday attacks, security of hash functions, Secure hash
+III 08
+algorithm (SHA) Digital Signatures: Digital Signatures, Elgamal Digital Signature Techniques,
+Digital signature standards (DSS), proof of digital signature algorithm,
+Key Management and distribution: Symmetric key distribution, Diffie-Hellman Key Exchange,
+IV 08
+Public key distribution, X.509 Certificates, Public key Infrastructure. Authentication Applications:
+Kerberos, Electronic mail security: pretty good privacy (PGP), S/MIME.
+IP Security: Architecture, Authentication header, Encapsulating security payloads, combining
+V security associations, key management. Introduction to Secure Socket Layer, Secure electronic, 08
+transaction (SET) System Security: Introductory idea of Intrusion, Intrusion detection, Viruses and
+related threats, firewalls
+Text books:
+1. William Stallings, “Cryptography and Network Security: Principals and Practice”, Pearson Education.
+2. Behrouz A. Frouzan: Cryptography and Network Security, McGraw Hill .
+3. C K Shyamala, N Harini, Dr. T.R.Padmnabhan Cryptography and Security ,Wiley
+4. Bruce Schiener, “Applied Cryptography”. John Wiley & Sons
+5. Bernard Menezes,” Network Security and Cryptography”, Cengage Learning.
+6. AtulKahate, “Cryptography and Network Security”, McGraw Hill
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 8
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Design & Development Of Applications ( KCS075)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Be exposed to technology and business trends impacting mobile applications K1 , K2
+CO 1
+Be competent with the characterization and architecture of mobile applications. K3
+CO 2
+Be competent with understanding enterprise scale requirements of mobile applications. K1 , K2
+CO 3
+Be competent with designing and developing mobile applications using one application K3
+CO 4
+development framework.
+Be exposed to Android and iOS platforms to develop the mobile applications K1 , K2
+CO 5
+3-0-0
+DETAILED SYLLABUS
+Proposed
+Unit Topic
+Lecture
+INTRODUCTION: Introduction to mobile applications – Embedded systems - Market and
+I business drivers for mobile applications – Publishing and delivery of mobile applications – 08
+Requirements gathering and validation for mobile applications
+BASIC DESIGN: Introduction – Basics of embedded systems design – Embedded OS - Design
+constraints for mobile applications, both hardware and software related – Architecting mobile
+II 08
+applications – User interfaces for mobile applications – touch events and gestures – Achieving
+quality constraints – performance, usability, security, availability and modifiability
+ADVANCED DESIGN: Designing applications with multimedia and web access capabilities –
+III Integration with GPS and social media networking applications – Accessing applications hosted in a 08
+cloud computing environment – Design patterns for mobile applications.
+TECHNOLOGY I – ANDROID: Introduction – Establishing the development environment –
+Android architecture – Activities and views – Interacting with UI – Persisting data using SQLite –
+IV 08
+Packaging and deployment – Interaction with server side applications – Using Google Maps, GPS
+and Wi-Fi – Integration with social media applications.
+TECHNOLOGY II –iOS: Introduction to Objective C – iOS features – UI implementation – Touch
+frameworks – Data persistence using Core Data and SQLite – Location aware applications using
+V 08
+Core Location and Map Kit – Integrating calendar and address book with social media application –
+Using Wi-Fi - iPhone marketplace. Swift: Introduction to Swift, features of swift
+Text books:
+1. Charlie Collins, Michael Galpin and Matthias Kappler, “Android in Practice”, DreamTech, 2012
+2. AnubhavPradhan , Anil V Despande Composing Mobile Apps,Learn ,explore,apply
+3. James Dovey and Ash Furrow, “Beginning Objective C”, Apress, 2012
+4. Jeff McWherter and Scott Gowell, "Professional Mobile Application Development", Wrox, 2012
+5. David Mark, Jack Nutting, Jeff LaMarche and Frederic Olsson, “Beginning iOS
+6. Development: Exploring the iOS SDK”, Apress, 2013.
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 9
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Software Testing (KCS076)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+CO 1 Have an ability to apply software testing knowledge and engineering methods. K2 , K3
+CO 2 Have an ability to design and conduct a software test process for a software testing project. K3, K4
+Have an ability to identify the needs of software test automation, and define and develop a test
+CO 3 K1 , K2
+tool to support test automation.
+Have an ability understand and identify various software testing problems, and solve these
+CO 4 K1 , K2
+problems by designing and selecting software test models, criteria, strategies, and methods.
+Have basic understanding and knowledge of contemporary issues in software testing, such as
+CO 5 K2
+component-based software testing problems.
+DETAILED SYLLABUS 3-0-0
+Proposed
+Unit Topic
+Lecture
+Review of Software Engineering: Overview of Software Evolution, SDLC, Testing Process,
+Terminologies in Testing: Error, Fault, Failure, Verification, Validation, Difference Between
+Verification and Validation, Test Cases, Testing Suite, Test ,Oracles, Impracticality of Testing
+I All Data; Impracticality of Testing AllPaths. Verification: Verification Methods, SRS 08
+Verification, Source Code Reviews, User Documentation Verification, Software, Project Audit,
+Tailoring Software Quality Assurance Program by Reviews, Walkthrough, Inspection and
+Configuration Audits
+Functional Testing: Boundary Value Analysis, Equivalence Class Testing, Decision Table
+Based Testing, Cause Effect Graphing Technique. Structural Testing: Control Flow Testing,
+II 08
+Path Testing, Independent Paths, Generation of Graph from Program, Identification of
+Independent Paths, Cyclomatic Complexity, Data Flow Testing, Mutation Testing
+Regression Testing: What is Regression Testing? Regression Test cases selection, Reducing the
+III number of test cases, Code coverage prioritization technique. Reducing the number of test 08
+cases: Prioritization guidelines, Priority category, Scheme, Risk Analysis
+Software Testing Activities: Levels of Testing, Debugging, Testing techniques and their
+applicability, Exploratory Testing Automated Test Data Generation: Test Data, Approaches to
+IV 08
+test data generation, test data generation using genetic algorithm, Test Data Generation Tools,
+Software Testing Tools, and Software test Plan.
+Object Oriented Testing: Definition, Issues, Class Testing, Object Oriented Integration and
+V System Testing. Testing Web Applications: Web Testing, User Interface Testing, Usability 08
+Testing, Security Testing, Performance Testing, Database testing, Post Deployment Testing
+Text books:
+1. Yogesh Singh, “Software Testing”, Cambridge University Press, New York, 2012
+2. K..K. Aggarwal & Yogesh Singh, “Software Engineering”, New Age International Publishers, New Delhi, 2003.
+3. Roger S. Pressman, “Software Engineering – A Practitioner’s Approach”, Fifth Edition, McGraw-Hill International Edition,
+New Delhi,2001.
+4. Marc Roper, “Software Testing”, McGraw-Hill Book Co., London, 1994.
+5. M.C. Trivedi, Software Testing & Audit, Khanna Publishing House 6. Boris Beizer, “Software System Testing and Quality
+Assurance”, Van Nostrand Reinhold, New York, 1984
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 10
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+DISTRIBUTED SYSTEM ( KCS077)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+CO 1 To provide hardware and software issues in modern distributed systems. K1 , K2
+To get knowledge in distributed architecture, naming, synchronization, consistency and replication, fault
+CO 2 K2
+tolerance, security, and distributed file systems.
+CO 3 To analyze the current popular distributed systems such as peer-to-peer (P2P) systems will also be analyzed. K4
+CO 4 To know about Shared Memory Techniques and have Sufficient knowledge about file access K1
+CO 5 Have knowledge of Synchronization and Deadlock. K1
+DETAILED SYLLABUS 3-0-0
+Proposed
+Unit Topic
+Lecture
+Characterization of Distributed Systems: Introduction, Examples of distributed Systems, Resource sharing
+and the Web Challenges. Architectural models, Fundamental Models. Theoretical Foundation for Distributed
+System: Limitation of Distributed system, absence of global clock, shared memory, Logical clocks
+I 08
+,Lamport’s & vectors logical clocks. Concepts in Message Passing Systems: causal order, total order, total
+causal order, Techniques for Message Ordering, Causal ordering of messages, global state, termination
+detection.
+Distributed Mutual Exclusion: Classification of distributed mutual exclusion, requirement of mutual
+exclusion theorem, Token based and non token based algorithms, performance metric for distributed mutual
+II exclusion algorithms. Distributed Deadlock Detection: system model, resource Vs communication deadlocks, 08
+deadlock prevention, avoidance, detection & resolution, centralized dead lock detection, distributed dead lock
+detection, path pushing algorithms, edge chasing algorithms.
+Agreement Protocols: Introduction, System models, classification of Agreement Problem, Byzantine
+agreement problem, Consensus problem, Interactive consistency Problem, Solution to Byzantine Agreement
+III problem, Application of Agreement problem, Atomic Commit in Distributed Database system. Distributed 08
+Resource Management: Issues in distributed File Systems, Mechanism for building distributed file systems,
+Design issues in Distributed Shared Memory, Algorithm for Implementation of Distributed Shared Memory.
+Failure Recovery in Distributed Systems: Concepts in Backward and Forward recovery, Recovery in
+IV Concurrent systems, Obtaining consistent Checkpoints, Recovery in Distributed Database Systems. Fault 08
+Tolerance: Issues in Fault Tolerance, Commit Protocols, Voting protocols, Dynamic voting protocols
+Transactions and Concurrency Control: Transactions, Nested transactions, Locks, Optimistic Concurrency
+control, Timestamp ordering, Comparison of methods for concurrency control. Distributed Transactions: Flat
+V and nested distributed transactions, Atomic Commit protocols, Concurrency control in distributed 08
+transactions, Distributed deadlocks, Transaction recovery. Replication: System model and group
+communication, Fault - tolerant services, highly available services, Transactions with replicated data.
+Text books:
+1. Singhal & Shivaratri, "Advanced Concept in Operating Systems", McGraw Hill
+2. Ramakrishna,Gehrke,” Database Management Systems”, McGraw Hill
+3. Vijay K.Garg Elements of Distributed Computing , Wiley
+4. Coulouris, Dollimore, Kindberg, "Distributed System: Concepts and Design”, Pearson Education 5.
+Tenanuanbaum, Steen,” Distributed Systems”, PHI
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 11
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Deep Learning (KCS078)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able :
+To present the mathematical, statistical and computational challenges of building neural K , K
+CO 1 1 2
+networks
+CO 2 To study the concepts of deep learning K 1 , K 2
+CO 3 To introduce dimensionality reduction techniques K 2
+CO 4 To enable the students to know deep learning techniques to support real-time applications K 2 , K 3
+CO 5 To examine the case studies of deep learning techniques K 3, K 6
+DETAILED SYLLABUS 3-0-0
+Proposed
+Topic
+Unit Lecture
+INTRODUCTION : Introduction to machine learning- Linear models (SVMs and Perceptrons,
+logistic regression)- Intro to Neural Nets: What a shallow network computes- Training a network:
+I 08
+loss functions, back propagation and stochastic gradient descent- Neural networks as universal
+function approximates
+DEEP NETWORKS : History of Deep Learning- A Probabilistic Theory of Deep Learning-
+Backpropagation and regularization, batch normalization- VC Dimension and Neural Nets-Deep Vs
+II 08
+Shallow Networks-Convolutional Networks- Generative Adversarial Networks (GAN), Semi-
+supervised Learning
+DIMENTIONALITY REDUCTION 9 Linear (PCA, LDA) and manifolds, metric learning - Auto
+encoders and dimensionality reduction in networks - Introduction to Convnet - Architectures –
+III 08
+AlexNet, VGG, Inception, ResNet - Training a Convnet: weights initialization, batch
+normalization, hyper parameter optimization
+OPTIMIZATION AND GENERALIZATION : Optimization in deep learning– Non-convex
+optimization for deep networks- Stochastic Optimization Generalization in neural networks- Spatial
+IV Transformer Networks- Recurrent networks, LSTM - Recurrent Neural Network Language 08
+Models- Word-Level RNNs & Deep Reinforcement Learning - Computational & Artificial
+Neuroscience
+CASE STUDY AND APPLICATIONS : Image net- Detection-Audio Wave Net-Natural Language
+V Processing Word2Vec - Joint Detection-Bioinformatics- Face Recognition- Scene Understanding- 08
+Gathering Image Captions
+Text books:
+1. Cosma Rohilla Shalizi, Advanced Data Analysis from an Elementary Point of View, 2015.
+2. Deng & Yu, Deep Learning: Methods and Applications, Now Publishers, 2013.
+3. Ian Goodfellow, Yoshua Bengio, Aaron Courville, Deep Learning, MIT Press, 2016.
+4. Michael Nielsen, Neural Networks and Deep Learning, Determination Press, 2015.
+Mapping with MOOCS: https://onlinecourses.nptel.ac.in/noc18_cs41/preview
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 12
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Service Oriented Architecture (KCS079)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able :
+Comprehend the need for SOA and its systematic evolution. K1 , K2
+CO 1
+CO 2 Apply SOA technologies to enterprise domain. K3
+CO 3 Design and analyze various SOA patterns and techniques. K4
+CO 4 Compare and evaluate best strategies and practices of SOA. K2
+CO 5 Understand the business case for SOA K1
+DETAILED SYLLABUS 3-0-0
+Proposed
+Topic
+Unit Lecture
+Introduction: SOA and MSA Basics: Service Orientation in Daily Life, Evolution of SOA and
+MSA. Service oriented Architecture and Microservices architecture – Drivers for SOA, Dimensions
+of SOA, Conceptual Model of SOA, Standards and Guidelines for SOA, Emergence of MSA.
+I Enterprise-Wide SOA: Considerations for Enterprise-wide SOA, Strawman Architecture for 08
+Enterprise-wide SOA, Enterprise SOA Reference Architecture, Object-oriented Analysis and
+Design (OOAD) Process, Service-oriented Analysis and Design (SOAD) Process, SOA
+Methodology for Enterprise
+Service-Oriented Applications: Considerations for Service-oriented Applications, Patterns for
+SOA, Pattern-based Architecture for Service-oriented Applications, Composite Applications,
+Composite Application Programming Model.
+II 08
+Service-Oriented Analysis and Design: Need for Models, Principles of Service Design,
+Nonfunctional Properties for Services, Design of Activity Services (or Business Services), Design
+of Data Services, Design of Client Services, Design of Business Process Services.
+Technologies for SOA: Technologies for Service Enablement, Technologies for Service
+Integration, Technologies for Service Orchestration.
+III 08
+SOA Governance and Implementation: Strategic Architecture Governance, Service Design-time
+Governance, Service Run-time Governance, Approach for Enterprise-wide SOA Implementation.
+Big Data and SOA: Concepts, Big Data and its characteristics, Technologies for Big Data,
+Service-orientation for Big Data Solutions.
+IV 08
+Business Case for SOA: Stakeholder Objectives, Benefits of SOA, Cost Savings, Return on
+Investment (ROI), Build a Case for SOA
+SOA Best Practices: SOA Strategy – Best Practices, SOA Development – Best Practices, SOA
+Governance – Best Practices.
+V 08
+EA and SOA for Business and IT Alignment: Enterprise Architecture, Need for Business and It
+Alignment, EA and SOA for Business and It Alignment
+Text books:
+1. Shankar Kambhampaty; Service - Oriented Architecture & Microservices Architecture: For Enterprise, Cloud, Big Data and
+Mobile; Wiley; 3rd Edition; 2018; ISBN: 9788126564064.
+2. Icon Group International; The 2018-2023 World Outlook for Service-Oriented Architecture (SOA) Software and Services;
+ICON Group International; 1st Edition, 2017; ASIN: B06WGPN8YD.
+3. Thomas Erl; Service Oriented Architecture Concepts Technology & Design; Pearson Education Limited; 2015; ISBN-13:
+9788131714904.
+4. Guido Schmutz, Peter Welkenbach, Daniel Liebhart; Service Oriented Architecture An Integration Blueprint; Shroff
+Publishers & Distributors; 2010; ISBN-13: 9789350231081
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 13
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Quantum Computing (KCS710)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Distinguish problems of different computational complexity and explain why certain problems K , K
+1 2
+CO 1 are rendered tractable by quantum computation with reference to the relevant concepts in
+quantum theory.
+Demonstrate an understanding of a quantum computing algorithm by simulating it on a K , K
+CO 2 2 3
+classical computer, and state some of the practical challenges in building a quantum computer.
+Contribute to a medium-scale application program as part of a co-operative team, making use K , K
+CO 3 2 3
+of appropriate collaborative development tools (such as version control systems).
+Produce code and documentation that is comprehensible to a group of different programmers K , K
+CO 4 3 4
+and present the theoretical background and results of a project in written and verbal form.
+Apply knowledge, skills, and understanding in executing a defined project of research, K K
+CO 5 3, 6
+development, or investigation and in identifying and implementing relevant outcomes.
+DETAILED SYLLABUS 3-0-0
+Proposed
+Unit Topic
+Lecture
+I Fundamental Concepts: Global Perspectives, Quantum Bits, Quantum Computation, Quantum 08
+Algorithms, Quantum Information, Postulates of Quantum Mechanisms.
+Quantum Computation: Quantum Circuits – Quantum algorithms, Single Orbit operations,
+Control Operations, Measurement, Universal Quantum Gates, Simulation of Quantum Systems,
+II 08
+Quantum Fourier transform, Phase estimation, Applications, Quantum search algorithms –
+Quantum counting – Speeding up the solution of NP – complete problems – Quantum Search for an
+unstructured database.
+Quantum Computers: Guiding Principles, Conditions for Quantum Computation, Harmonic
+III 08
+Oscillator Quantum Computer, Optical Photon Quantum Computer – Optical cavity Quantum
+electrodynamics, Ion traps, Nuclear Magnetic resonance
+Quantum Information: Quantum noise and Quantum Operations – Classical Noise and Markov
+IV Processes, Quantum Operations, Examples of Quantum noise and Quantum Operations – 08
+Applications of Quantum operations, Limitations of the Quantum operations formalism, Distance
+Measures for Quantum information.
+Quantum Error Correction: Introduction, Shor code, Theory of Quantum Error –Correction,
+V Constructing Quantum Codes, Stabilizer codes, Fault – Tolerant Quantum Computation, Entropy 08
+and information – Shannon Entropy, Basic properties of Entropy, Von Neumann, Strong Sub
+Additivity, Data Compression, Entanglement as a physical resource .
+Text books:
+1. Micheal A. Nielsen. &Issac L. Chiang, “Quantum Computation and Quantum Information”, Cambridge
+University Press, Fint South Asian edition, 2002.
+2. Eleanor G. Rieffel, Wolfgang H. Polak , “Quantum Computing - A Gentle Introduction” (Scientific and
+Engineering Computation) Paperback – Import, Oct 2014
+3. Computing since Democritus by Scott Aaronson, Computer Science: An Introduction by N. DavidMermin 5.
+Yanofsky's and Mannucci, Quantum Computing for Computer Scientists.
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 14
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Mobile Computing (KCS711)
+Course Outcome (CO) Bloom’s Knowledge Level (KL)
+At the end of course, the student will be able to understand
+Explain and discuss issues in mobile computing and illustrate overview of wireless telephony and K1, K4
+CO 1
+channel allocation in cellular systems.
+CO 2 Explore the concept of Wireless Networking and Wireless LAN. K1
+Analyse and comprehend Data management issues like data replication for mobile computers, K4
+CO 3
+adaptive clustering for mobile wireless networks and Disconnected operations.
+Identify Mobile computing Agents and state the issues pertaining to security and fault tolerance in K1, K2
+CO 4
+mobile computing environment.
+Compare and contrast various routing protocols and will identify and interpret the performance of K2
+CO 5
+network systems using Adhoc networks.
+DETAILED SYLLABUS 3-1-0
+Proposed
+Unit Topic
+Lecture
+Introduction, issues in mobile computing, overview of wireless telephony: cellular concept, GSM:
+I air-interface, channel structure, location management: HLR-VLR, hierarchical, handoffs, channel 08
+allocation in cellular systems, CDMA, GPRS.
+Wireless Networking, Wireless LAN Overview: MAC issues, IEEE 802.11, Blue Tooth, Wireless
+II multiple access protocols, TCP over wireless, Wireless applications, data broadcasting, Mobile IP, 08
+WAP: Architecture, protocol stack, application environment, applications.
+Data management issues, data replication for mobile computers, adaptive clustering for mobile
+III 08
+wireless networks, File system, Disconnected operations.
+Mobile Agents computing, security and fault tolerance, transaction processing in mobile computing
+IV 08
+environment.
+Ad Hoc networks, localization, MAC issues, Routing protocols, global state routing (GSR),
+Destination sequenced distance vector routing (DSDV), Dynamic source routing (DSR), Ad Hoc on
+V 08
+demand distance vector routing (AODV), Temporary ordered routing algorithm (TORA), QoS in
+Ad Hoc Networks, applications.
+Text books:
+1. J. Schiller, Mobile Communications, Addison Wesley.
+2. A. Mehrotra, GSM System Engineering.
+3. M. V. D. Heijden, M. Taylor, Understanding WAP, Artech House.
+4. Charles Perkins, Mobile IP, Addison Wesley.
+5. Charles Perkins, Ad hoc Networks, Addison Wesley.
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 15
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Internet of Things (KCS712)
+Course Outcome (CO) Bloom’s Knowledge Level (KL)
+At the end of course, the student will be able to understand
+CO 1 Demonstrate basic concepts, principles and challenges in IoT. K1,K2
+CO 2 Illustrate functioning of hardware devices and sensors used for IoT. K2
+CO 3 Analyze network communication aspects and protocols used in IoT. K4
+Apply IoT for developing real life applications using Ardunio programming. K3
+CO 4
+To develop IoT infrastructure for popular applications K K
+CP 5 2, 3
+DETAILED SYLLABUS 3-1-0
+Proposed
+Unit Topic
+Lecture
+Internet of Things (IoT): Vision, Definition, Conceptual Framework, Architectural view,
+technology behind IoT, Sources of the IoT, M2M Communication, IoT Examples. Design
+I Principles for Connected Devices: IoT/M2M systems layers and design standardization, 08
+communication technologies, data enrichment and consolidation, ease of designing and
+affordability
+Hardware for IoT: Sensors, Digital sensors, actuators, radio frequency identification (RFID)
+technology, wireless sensor networks, participatory sensing technology. Embedded Platforms for
+II 08
+IoT: Embedded computing basics, Overview of IOT supported Hardware platforms such as
+Arduino, NetArduino, Raspberry pi, Beagle Bone, Intel Galileo boards and ARM cortex.
+Network & Communication aspects in IoT: Wireless Medium access issues, MAC protocol
+III survey, Survey routing protocols, Sensor deployment & Node discovery, Data aggregation & 08
+dissemination
+Programming the Ardunio: Ardunio Platform Boards Anatomy, Ardunio IDE, coding, using
+IV 08
+emulator, using libraries, additions in ardunio, programming the ardunio for IoT.
+Challenges in IoT Design challenges: Development Challenges, Security Challenges, Other
+challenges IoT Applications: Smart Metering, E-health, City Automation, Automotive
+V 08
+Applications, home automation, smart cards, communicating data with H/W units, mobiles, tablets,
+Designing of smart street lights in smart city.
+Text books:
+1. Olivier Hersent,David Boswarthick, Omar Elloumi “The Internet of Things key applications and protocols”, wiley
+2. Jeeva Jose, Internet of Things, Khanna Publishing House
+3. Michael Miller “The Internet of Things” by Pearson
+4. Raj Kamal “INTERNET OF THINGS”, McGraw-Hill, 1ST Edition, 2016
+5. ArshdeepBahga, Vijay Madisetti “Internet of Things (A hands on approach)” 1ST edition, VPI publications,2014
+6. Adrian McEwen,Hakin Cassimally “Designing the Internet of Things” Wiley India
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 16
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Cloud Computing (KCS713)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+CO 1 Describe architecture and underlying principles of cloud computing. K 3
+K , K
+CO 2 Explain need, types and tools of Virtualization for cloud. 3 4
+K , K
+CO 3 Describe Services Oriented Architecture and various types of cloud services. 2 3
+K , K
+Explain Inter cloud resources management cloud storage services and their providers Assess 2 4
+CO 4
+security services and standards for cloud computing.
+CO 5 Analyze advanced cloud technologies. K , K
+3 6
+DETAILED SYLLABUS 3‐1‐0
+Proposed
+Unit Topic
+Lecture
+Introduction To Cloud Computing: Definition of Cloud – Evolution of Cloud Computing –
+Underlying Principles of Parallel and Distributed Computing – Cloud Characteristics – Elasticity in
+I 08
+Cloud – On‐demand Provisioning.
+Cloud Enabling Technologies Service Oriented Architecture: REST and Systems of Systems – Web
+Services – Publish, Subscribe Model – Basics of Virtualization – Types of Virtualization –
+II 08
+Implementation Levels of Virtualization – Virtualization Structures – Tools and Mechanisms –
+Virtualization of CPU – Memory – I/O Devices –Virtualization Support and Disaster Recovery.
+Cloud Architecture, Services And Storage: Layered Cloud Architecture Design – NIST Cloud
+Computing Reference Architecture – Public, Private and Hybrid Clouds – laaS – PaaS – SaaS –
+III Architectural Design Challenges – Cloud Storage – Storage‐as‐a‐Service – Advantages of Cloud 08
+Storage – Cloud Storage Providers – S3.
+Resource Management And Security In Cloud: Inter Cloud Resource Management – Resource
+Provisioning and Resource Provisioning Methods – Global Exchange of Cloud Resources – Security
+IV Overview – Cloud Security Challenges – Software‐as‐a‐Service Security – Security Governance – 08
+Virtual Machine Security – IAM – Security Standards.
+Cloud Technologies And Advancements Hadoop: MapReduce – Virtual Box — Google App
+V Engine – Programming Environment for Google App Engine –– Open Stack – Federation in the 08
+Cloud – Four Levels of Federation – Federated Services and Applications – Future of Federation.
+Text books:
+1. Kai Hwang, Geoffrey C. Fox, Jack G. Dongarra, “Distributed and Cloud Computing, From Parallel Processing to the
+Internet of Things”, Morgan Kaufmann Publishers, 2012.
+2. Rittinghouse, John W., and James F. Ransome, ―Cloud Computing: Implementation, Management and Security, CRC
+Press, 2017.
+3. Rajkumar Buyya, Christian Vecchiola, S. ThamaraiSelvi, ―Mastering Cloud Computing, Tata Mcgraw Hill, 2013.
+4. Toby Velte, Anthony Velte, Robert Elsenpeter, “Cloud Computing – A Practical Approach, Tata Mcgraw Hill, 2009.
+5. George Reese, “Cloud Application Architectures: Building Applications and Infrastructure in the Cloud: Transactional
+Systems for EC2 and Beyond (Theory in Practice), O’Reilly, 2009.
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 17
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Block chain Architecture Design (KCS714)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to
+Describe the basic understanding of Blockchain architecture along with its primitive.
+CO 1 K , K
+1 2
+Explain the requirements for basic protocol along with scalability aspects.
+CO 2 K , K
+2 3
+CO 3 Design and deploy the consensus process using frontend and backend. K , K
+3 4
+Apply Blockchain techniques for different use cases like Finance, Trade/Supply and
+CO 4 Government activities. K , K
+4 5
+DETAILED SYLLABUS 3-0-0
+Unit Topic Proposed
+Lecture
+Introduction to Blockchain: Digital Money to Distributed Ledgers , Design Primitives: Protocols,
+Security, Consensus, Permissions, Privacy.
+I 08
+Blockchain Architecture and Design: Basic crypto primitives: Hash, Signature,) Hashchain to
+Blockchain, Basic consensus mechanisms
+Consensus: Requirements for the consensus protocols, Proof of Work (PoW), Scalability aspects of
+II Blockchain consensus protocols 08
+Permissioned Blockchains:Design goals, Consensus protocols for Permissioned Blockchains
+Hyperledger Fabric (A): Decomposing the consensus process , Hyperledger fabric components,
+Chaincode Design and Implementation
+III 08
+Hyperledger Fabric (B): Beyond Chaincode: fabric SDK and Front End (b) Hyperledger
+composer tool
+Use case 1 : Blockchain in Financial Software and Systems (FSS): (i) Settlements, (ii) KYC, (iii)
+Capital markets, (iv) Insurance
+IV 08
+Use case 2: Blockchain in trade/supply chain: (i) Provenance of goods, visibility, trade/supply
+chain finance, invoice management discounting, etc
+Use case 3: Blockchain for Government: (i) Digital identity, land records and other kinds of record
+V keeping between government entities, (ii) public distribution system social welfare systems 08
+Blockchain Cryptography, Privacy and Security on Blockchain
+Text books:
+1. Mstering Bitcoin: Unlocking Digital Cryptocurrencies, by Andreas Antonopoulos
+2. Blockchain by Melanie Swa, O’Reilly
+3. Hyperledger Fabric - https://www.hyperledger.org/projects/fabric
+4. Zero to Blockchain - An IBM Redbooks course, by Bob Dill, David Smits - https://www.redbooks.ibm.com/
+Redbooks.nsf/RedbookAbstracts/crse0401.html
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 18
+
+COMPUTER SCIENCE AND ENGINEERING/CS
+Mini Project or Internship Assessment (KCS 354 , KCS 554 , KCS 752)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Developing a technical artifact requiring new technical skills and effectively utilizing a new K , K
+CO 1 4 5
+software tool to complete a task
+Writing requirements documentation, Selecting appropriate technologies, identifying and K , K
+CO 2 5 6
+creating appropriate test cases for systems.
+Demonstrating understanding of professional customs & practices and working with K , K
+CO 3 4 5
+professional standards.
+Improving problem-solving, critical thinking skills and report writing. K , K
+CO 4 4 5
+Learning professional skills like exercising leadership, behaving professionally, behaving K K
+2, 4
+CO 5 ethically, listening effectively, participating as a member of a team, developing appropriate
+workplace attitudes.
+Project (KCS 753 , KCS 851)
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Analyze and understand the real life problem and apply their knowledge to get programming K , K
+CO 1 4 5
+solution.
+Engage in the creative design process through the integration and application of diverse K , K
+CO 2 4 5
+technical knowledge and expertise to meet customer needs and address social issues.
+Use the various tools and techniques, coding practices for developing real life solution to the K , K
+CO 3 5 6
+problem.
+Find out the errors in software solutions and establishing the process to design maintainable K , K
+CO 4 4 5
+software applications
+Write the report about what they are doing in project and learning the team working skills K K
+CO 5 5, 6
+Curriculum & Evaluation Scheme (VII & VIII semester) Page 19

@@ -49,20 +49,12 @@ def setup_scheduler() -> None:
         replace_existing=True,
     )
 
-    scheduler.add_job(
-        run_aktu_fetch,
-        CronTrigger(hour=0, minute=0),
-        id="aktu_notification_fetch",
-        name="Daily AKTU notification fetch (midnight)",
-        replace_existing=True,
-    )
-
     scheduler.start()
     logger.info(
-        "Scheduler started: aktu_fetch (00:00), daily_healing (02:00), "
-        "star_rationalization (02:30), daily_faq (03:00), weekly_prompts (Sun 03:00)"
+        "Scheduler started: daily_healing (02:00), star_rationalization (02:30), "
+        "daily_faq (03:00), weekly_prompts (Sun 03:00)"
     )
-    print("Scheduler started with 5 jobs: aktu_fetch (midnight), daily_healing (2AM), star_sql (2:30AM), daily_faq (3AM), weekly_prompts (Sun 3AM)")
+    print("Scheduler started with 4 jobs: daily_healing (2AM), star_sql (2:30AM), daily_faq (3AM), weekly_prompts (Sun 3AM)")
 
 
 # ── Job wrappers (thin — delegate to jobs/ modules) ───────────────────────────
@@ -80,11 +72,6 @@ async def run_daily_faq() -> None:
 async def run_star_rationalization() -> None:
     from jobs.star_batch import run_star_rationalization as _run
     await _run()
-
-
-async def run_aktu_fetch() -> None:
-    from jobs.aktu_fetch import run
-    await run()
 
 
 async def run_weekly_prompts() -> None:

@@ -448,15 +448,3 @@ async def batch_rationalize(_: TokenData = Depends(require_admin)):
     results = await star.batch_rationalize_from_healing()
     stats = await star.get_training_stats()
     return {"results": results, "stats": stats}
-
-
-@router.post("/dashboard/aktu-fetch")
-async def manual_aktu_fetch(_: TokenData = Depends(require_admin)):
-    """Manually trigger AKTU notification fetch from admin panel."""
-    from core.aktu_notifications import aktu_service
-
-    content = await aktu_service.fetch_from_website()
-    if content:
-        result = await aktu_service.update_cache(content)
-        return {"success": True, "result": result}
-    return {"success": False, "error": "Could not reach AKTU website"}

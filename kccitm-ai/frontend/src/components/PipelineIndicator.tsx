@@ -6,6 +6,9 @@ const ROUTE_COLORS: Record<string, string> = {
   HYBRID: 'bg-purple-50 text-purple-700',
   FAQ: 'bg-amber-50 text-amber-700',
   CACHED: 'bg-emerald-50 text-emerald-700',
+  OPENAI: 'bg-orange-50 text-orange-700',
+  AKTU: 'bg-teal-50 text-teal-700',
+  STUDENT: 'bg-indigo-50 text-indigo-700',
 };
 
 export default function PipelineIndicator({ route, timeMs }: { route: string; timeMs?: number }) {

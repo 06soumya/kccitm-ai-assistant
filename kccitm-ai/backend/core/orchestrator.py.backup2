@@ -156,10 +156,8 @@ class Orchestrator:
                     raw_history, self.llm
                 )
 
-            # Step 2: Check cache (skip for AKTU notifications — handled separately)
-            from core.aktu_notifications import aktu_service as _aktu_svc
-            _skip_cache = _aktu_svc.is_notification_query(query)
-            cache_hit = None if _skip_cache else await self.cache.check(query)
+            # Step 2: Check cache
+            cache_hit = await self.cache.check(query)
             if cache_hit:
                 response = QueryResponse(
                     success=True,
@@ -204,32 +202,8 @@ class Orchestrator:
             except Exception as exc:
                 logger.debug("FAQ engine check failed (non-critical): %s", exc)
 
-            # Step 2.55: AKTU notification check (cached/live from website)
-            try:
-                from core.aktu_notifications import aktu_service
-                if aktu_service.is_notification_query(query):
-                    force = aktu_service.is_force_fetch_query(query)
-                    notif_text = await aktu_service.get_notifications(force_fetch=force)
-                    route_label = "AKTU_LIVE" if force else "AKTU_CACHED"
-                    if session_id:
-                        await self._save_to_session(
-                            session_id, query, notif_text, {"route_used": route_label},
-                        )
-                    return QueryResponse(
-                        success=True,
-                        response=notif_text,
-                        route_used=route_label,
-                        total_time_ms=(time.perf_counter() - t0) * 1000,
-                        metadata={"source": "aktu_notifications"},
-                    )
-            except Exception as exc:
-                logger.debug("AKTU notification check failed: %s", exc)
-
-            # Step 2.6: AKTU knowledge check (syllabus, regulations — skip if notification query)
-            if _skip_cache:
-                aktu_response = None  # notification queries handled at Step 2.55
-            else:
-                aktu_response = await self._check_aktu_knowledge(query)
+            # Step 2.6: AKTU knowledge check (syllabus, regulations, exam rules)
+            aktu_response = await self._check_aktu_knowledge(query)
             if aktu_response:
                 if session_id:
                     await self._save_to_session(
@@ -311,17 +285,6 @@ class Orchestrator:
             response.route_result = route_result
             response.route_used = response.route_used or route_result.route
             response.total_time_ms = (time.time() - t0) * 1000
-
-            # Step 4.5: OpenAI fallback — only for general knowledge with weak results
-            if settings.OPENAI_ENABLED and (not response.success or not response.response or "don't have" in (response.response or "")):
-                from core.openai_fallback import is_general_knowledge_query, ask_openai
-                if is_general_knowledge_query(query):
-                    openai_answer = await ask_openai(query)
-                    if openai_answer:
-                        response.success = True
-                        response.response = openai_answer
-                        response.route_used = "OPENAI"
-                        response.total_time_ms = (time.time() - t0) * 1000
 
             # Step 5: Store in cache (only successful non-empty responses)
             if response.success and response.response:
@@ -734,17 +697,14 @@ class Orchestrator:
 
     # ── AKTU knowledge keywords ────────────────────────────────────────────────
 
-    # Multi-word or long keywords (safe for substring match)
     _AKTU_KEYWORDS = {
         "syllabus", "aktu", "curriculum", "ordinance", "regulation",
         "exam rules", "academic calendar", "course structure",
-        "semester scheme", "subject code",
+        "credit", "semester scheme", "subject code",
+        "kcs", "bcs", "kas", "bas", "bce", "bee", "bme",
         "co-curricular", "audit course", "open elective",
         "departmental elective", "professional elective",
     }
-    # Short subject code prefixes — must be followed by a digit to match
-    # e.g. "kcs503" or "bcs 301" but NOT "Debasish" matching "bas"
-    _AKTU_CODE_PREFIXES = ("kcs", "bcs", "kas", "bas", "bce", "bee", "bme")
 
     async def _check_aktu_knowledge(self, query: str) -> str | None:
         """
@@ -754,14 +714,7 @@ class Orchestrator:
         q_lower = query.lower()
 
         # Only trigger for AKTU-related queries
-        keyword_match = any(kw in q_lower for kw in self._AKTU_KEYWORDS)
-        # Check subject code prefixes (must be followed by a digit, e.g. "kcs503")
-        if not keyword_match:
-            keyword_match = any(
-                re.search(rf"\b{prefix}\d", q_lower)
-                for prefix in self._AKTU_CODE_PREFIXES
-            )
-        if not keyword_match:
+        if not any(kw in q_lower for kw in self._AKTU_KEYWORDS):
             return None
 
         try:

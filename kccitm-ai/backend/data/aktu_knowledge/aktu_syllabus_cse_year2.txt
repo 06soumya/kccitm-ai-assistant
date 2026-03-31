@@ -1,0 +1,562 @@
+DR. A.P.J. ABDUL KALAM TECHNICAL UNIVERSITY LUCKNOW
+Evaluation Scheme & Syllabus
+For
+B.Tech. 2nd Year
+Computer Science and Engineering (Hindi)
+On
+AICTE Model Curriculum
+(Effective from the Session: 2022-23)
+DR. A.P.J. ABDUL KALAM TECHNICAL UNIVERSITY LUCKNOW
+
+General Guidelines for Computer Science and Engineering-(Hindi)
+1. The Internal and External examination papers may be bilingual ( Hindi & English )
+2. Students may write the assessment (internal and external) either in Hindi, English or
+both.
+3. The subject teacher may use Hindi and English both as instruction medium.
+4. Students may be motivated to develop application for Hindi language as mini or major
+projects.
+
+B.TECH (COMPUTER SCIENCE AND ENGINEERING) - HINDI
+SEMESTER- III
+End
+Subject Periods Evaluation Scheme
+Sl. Semester
+Subject Total Credit
+No.
+Codes
+L T P CT TA Total PS TE PE
+KOE031H-
+Engineering Science Course/
+1 038H / 3 1 0 30 20 50 100 150 4
+Maths IV
+KAS302H
+Technical 2 1 0
+KAS301/
+2 Communication/Universal 30 20 50 100 150 3
+KVE 301H
+Human values 3 0 0
+3 KCS301H Data Structure 3 1 0 30 20 50 100 150 4
+Computer Organization and
+4 KCS302H 3 1 0 30 20 50 100 150 4
+Architecture
+Discrete Structures & Theory
+5 KCS303H 3 0 0 30 20 50 100 150 3
+of Logic
+6 KCS351H Data Structures Using C Lab 0 0 2 25 25 50 1
+7 KCS352H Computer Organization Lab 0 0 2 25 25 50 1
+Discrete Structure & Logic
+8 KCS353H 0 0 2 25 25 50 1
+Lab
+Mini Project or Internship
+9 KCS354H 0 0 2 50 50 1
+Assessment*
+Computer System
+KNC301H/
+10 Security/Python 2 0 0 15 10 25 50 0
+KNC302H
+Programming
+MOOCs (Essential for Hons.
+11
+Degree)
+Total 950 22
+*The Mini Project or internship (3-4 weeks) conducted during summer break after II semester and will be assessed during III
+semester.
+
+SEMESTER- IV
+End
+Subject Periods Evaluation Scheme Total
+Sl. Semester
+Subject Credit
+No.
+Codes
+L T P CT TA Total PS TE PE
+KAS402H/ Maths IV/Engg. Science
+1 KOE041H- Course 3 1 0 30 20 50 100 150 4
+048H
+KVE401H/ Universal Human Values/ 3 0 0
+2 KAS401 Technical Communication 30 20 50 100 150 3
+2 1 0
+3 KCS401H Operating Systems 3 0 0 30 20 50 100 150 3
+Theory of Automata and
+4 KCS402H 3 1 0 30 20 50 100 150 4
+Formal Languages
+5 KCS403H Microprocessor 3 1 0 30 20 50 100 150 4
+6 KCS451H Operating Systems Lab 0 0 2 25 25 50 1
+7 KCS452H Microprocessor Lab 0 0 2 25 25 50 1
+Python Language
+8 KCS453H 0 0 2 25 25 50 1
+Programming Lab
+KNC402H/ Python
+9 KNC401H Programming/Computer 2 0 0 15 10 25 50 0
+System Security
+MOOCs (Essential for
+10
+Hons. Degree)
+Total 900 21
+
+B.TECH. COMPUTER SCIENCE AND ENGINEERING - HINDI
+THIRD SEMESTER (DETAILED SYLLABUS
+KCS 301H DATA STRUCTURE
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Describe how arrays, linked lists, stacks, queues, trees, and graphs are represented in memory,
+CO 1 K K
+used by the algorithms and their common applications. 1, 2
+Discuss the computational efficiency of the sorting and searching algorithms.
+CO 2 K
+2
+Implementation of Trees and Graphs and perform various operations on these data structure.
+CO 3 K
+3
+Understanding the concept of recursion, application of recursion and its implementation and
+CO 4 K
+removal of recursion. 4
+Identify the alternative implementations of data structures with respect to its performance to
+CO 5 K K
+solve a real world problem. 5, 6
+DETAILED SYLLABUS 3-1-0
+Unit Topic Proposed
+Lecture
+Introduction: Basic Terminology, Elementary Data Organization, Built in Data Types in C.
+Algorithm, Efficiency of an Algorithm, Time and Space Complexity, Asymptotic notations: Big
+Oh, Big Theta and Big Omega, Time-Space trade-off. Abstract Data Types (ADT)
+Arrays: Definition, Single and Multidimensional Arrays, Representation of Arrays: Row Major
+I Order, and Column Major Order, Derivation of Index Formulae for 1-D,2-D,3-D and n-D Array 08
+Application of arrays, Sparse Matrices and their representations.
+Linked lists: Array Implementation and Pointer Implementation of Singly Linked Lists, Doubly
+Linked List, Circularly Linked List, Operations on a Linked List. Insertion, Deletion, Traversal,
+Polynomial Representation and Addition Subtraction & Multiplications of Single variable & Two
+variables Polynomial.
+Stacks: Abstract Data Type, Primitive Stack operations: Push & Pop, Array and Linked
+Implementation of Stack in C, Application of stack: Prefix and Postfix Expressions, Evaluation of
+II postfix expression, Iteration and Recursion- Principles of recursion, Tail recursion, Removal of
+08
+recursion Problem solving using iteration and recursion with examples such as binary search,
+Fibonacci numbers, and Hanoi towers. Tradeoffs between iteration and recursion.
+Queues: Operations on Queue: Create, Add, Delete, Full and Empty, Circular queues, Array and
+linked implementation of queues in C, Dequeue and Priority Queue.
+Searching: Concept of Searching, Sequential search, Index Sequential Search, Binary Search.
+III Concept of Hashing & Collision resolution Techniques used in Hashing. Sorting: Insertion Sort, 08
+Selection, Bubble Sort, Quick Sort, Merge Sort, Heap Sort and Radix Sort.
+Graphs: Terminology used with Graph, Data Structure for Graph Representations: Adjacency
+IV Matrices, Adjacency List, Adjacency. Graph Traversal: Depth First Search and Breadth First
+Search, Connected Component, Spanning Trees, Minimum Cost Spanning Trees: Prims and 08
+Kruskal algorithm. Transitive Closure and Shortest Path algorithm: Warshal Algorithm and
+Dijikstra Algorithm.
+
+Trees: Basic terminology used with Tree, Binary Trees, Binary Tree Representation: Array
+Representation and Pointer(Linked List) Representation, Binary Search Tree, Strictly Binary
+Tree ,Complete Binary Tree . A Extended Binary Trees, Tree Traversal algorithms: Inorder,
+V 08
+Preorder and Postorder, Constructing Binary Tree from given Tree Traversal, Operation of
+Insertation , Deletion, Searching & Modification of data in Binary Search . Threaded Binary trees,
+Traversing Threaded Binary trees. Huffman coding using Binary Tree. Concept & Basic
+Operations for AVL Tree , B Tree & Binary Heaps
+Text books:
+1. Aaron M. Tenenbaum, Yedidyah Langsam and Moshe J. Augenstein, “Data Structures Using C and C++”,
+PHI
+Learning Private Limited, Delhi India
+2. Horowitz and Sahani, “Fundamentals of Data Structures”, Galgotia Publications Pvt Ltd Delhi India.
+3. Lipschutz, “Data Structures” Schaum’s Outline Series, Tata McGraw-hill Education (India) Pvt. Ltd.
+4. Thareja, “Data Structure Using C” Oxford Higher Education.
+5. AK Sharma, “Data Structure Using C”, Pearson Education India.
+6. Rajesh K. Shukla, “Data Structure Using C and C++” Wiley Dreamtech Publication.
+7. Michael T. Goodrich, Roberto Tamassia, David M. Mount “Data Structures and Algorithms in C++”,
+Wiley India.
+8. P. S. Deshpandey, “C and Data structure”, Wiley Dreamtech Publication.
+9. R. Kruse etal, “Data Structures and Program Design in C”, Pearson Education.
+10. Berztiss, AT: Data structures, Theory and Practice, Academic Press.
+11. Jean Paul Trembley and Paul G. Sorenson, “An Introduction to Data Structures with applications”,
+McGraw Hill.
+12. Adam Drozdek “Data Structures and Algorithm in Java”, Cengage Learning
+
+KCS 302H COMPUTER ORGANIZATION AND ARCHITECTURE
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+CO 1 Study of the basic structure and operation of a digital computer system. K K
+1, 2
+Analysis of the design of arithmetic & logic unit and understanding of the fixed point and floating-
+CO 2 K K
+point arithmetic operations. 2, 4
+CO 3 Implementation of control unit techniques and the concept of Pipelining K
+3
+CO 4 Understanding the hierarchical memory system, cache memories and virtual memory K
+2
+Understanding the different ways of communicating with I/O devices and standard I/O interfaces
+CO 5 K K
+2, 4
+DETAILED SYLLABUS 3-1-0
+Unit Topic Proposed
+Lecture
+Introduction: Functional units of digital system and their interconnections, buses, bus architecture,
+I 08
+types of buses and bus arbitration. Register, bus and memory transfer. Processor organization,
+general registers organization, stack organization and addressing modes.
+Arithmetic and logic unit: Look ahead carries adders. Multiplication: Signed operand
+II 08
+multiplication, Booths algorithm and array multiplier. Division and logic operations. Floating point
+arithmetic operation, Arithmetic & logic unit design. IEEE Standard for Floating Point Numbers
+Control Unit: Instruction types, formats, instruction cycles and sub cycles (fetch and execute etc),
+III micro operations, execution of a complete instruction. Program Control, Reduced Instruction Set
+08
+Computer, Pipelining. Hardwire and micro programmed control: micro programme sequencing,
+concept of horizontal and vertical microprogramming.
+Memory: Basic concept and hierarchy, semiconductor RAM memories, 2D & 2 1/2D memory
+IV organization. ROM memories. Cache memories: concept and design issues & performance, address 08
+mapping and replacement Auxiliary memories: magnetic disk, magnetic tape and optical disks
+Virtual memory: concept implementation.
+Input / Output: Peripheral devices, I/O interface, I/O ports, Interrupts: interrupt hardware, types of
+V interrupts and exceptions. Modes of Data Transfer: Programmed I/O, interrupt initiated I/O and 08
+Direct Memory Access., I/O channels and processors. Serial Communication: Synchronous &
+asynchronous communication, standard communication interfaces.
+Text books:
+1. Computer System Architecture - M. Mano
+2. Carl Hamacher, Zvonko Vranesic, Safwat Zaky Computer Organization, McGraw-Hill, Fifth Edition, Reprint 2012
+3. John P. Hayes, Computer Architecture and Organization, Tata McGraw Hill, Third Edition, 1998. Reference books
+4. William Stallings, Computer Organization and Architecture-Designing for Performance, Pearson Education, Seventh
+edition, 2006.
+5. Behrooz Parahami, “Computer Architecture”, Oxford University Press, Eighth Impression, 2011.
+6. David A. Patterson and John L. Hennessy, “Computer Architecture-A Quantitative Approach”, Elsevier, a division
+of reed India Private Limited, Fifth edition, 2012
+7. Structured Computer Organization, Tannenbaum(PHI)
+
+KCS 303H DISCRETE STRUCTURES & THEORY OF LOGIC
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Write an argument using logical notation and determine if the argument is or is not valid.
+CO 1 K K
+3, 4
+Understand the basic principles of sets and operations in sets.
+CO 2 K K
+1, 2
+Demonstrate an understanding of relations and functions and be able to determine their
+CO 3 K
+properties. 3
+Demonstrate different traversal methods for trees and graphs.
+CO 4 K K
+1, 4
+Model problems in Computer Science using graphs and trees.
+CO 5 K K
+2, 6
+DETAILED SYLLABUS 3-1-0
+Unit Topic Proposed
+Lecture
+Set Theory: Introduction, Combination of sets, Multisets, Ordered pairs. Proofs of some general
+identities on sets. Relations: Definition, Operations on relations, Properties of relations,
+Composite Relations, Equality of relations, Recursive definition of relation, Order of relations.
+I 08
+Functions: Definition, Classification of functions, Operations on functions, Recursively defined
+functions. Growth of Functions.
+Natural Numbers: Introduction, Mathematical Induction, Variants of Induction, Induction with
+Nonzero Base cases. Proof Methods, Proof by counter – example, Proof by contradiction.
+II Algebraic Structures: Definition, Groups, Subgroups and order, Cyclic Groups, Cosets,
+Lagrange's theorem, Normal Subgroups, Permutation and Symmetric groups, Group 08
+Homomorphisms, Definition and elementary properties of Rings and Fields.
+Lattices: Definition, Properties of lattices – Bounded, Complemented, Modular and Complete
+III lattice. Boolean Algebra: Introduction, Axioms and Theorems of Boolean algebra, Algebraic
+08
+manipulation of Boolean expressions. Simplification of Boolean Functions, Karnaugh maps, Logic
+gates, Digital circuits and Boolean algebra.
+Propositional Logic: Proposition, well formed formula, Truth tables, Tautology, Satisfiability,
+IV Contradiction, Algebra of proposition, Theory of Inference. (8) 08
+Predicate Logic: First order predicate, well formed formula of predicate, quantifiers, Inference
+theory of predicate logic.
+Trees: Definition, Binary tree, Binary tree traversal, Binary search tree.
+V Graphs: Definition and terminology, Representation of graphs, Multigraphs, Bipartite graphs,
+Planar graphs, Isomorphism and Homeomorphism of graphs, Euler and Hamiltonian paths, 08
+Graph coloring, Recurrence Relation & Generating function: Recursive definition of functions,
+Recursive algorithms, Method of solving recurrences.
+Combinatorics: Introduction, Counting Techniques, Pigeonhole Principle
+Text books:
+1.Koshy, Discrete Structures, Elsevier Pub. 2008 Kenneth H. Rosen, Discrete Mathematics and Its Applications, 6/e,
+McGraw-Hill, 2006.
+2. B. Kolman, R.C. Busby, and S.C. Ross, Discrete Mathematical Structures, 5/e, Prentice Hall, 2004.
+3.E.R. Scheinerman, Mathematics: A Discrete Introduction, Brooks/Cole, 2000.
+4.R.P. Grimaldi, Discrete and Combinatorial Mathematics, 5/e, Addison Wesley, 2004
+5.Liptschutz, Seymour, “ Discrete Mathematics”, McGraw Hill.
+6.Trembley, J.P & R. Manohar, “Discrete Mathematical Structure with Application to Computer Science”, McGraw Hill.
+4. Deo, 7.Narsingh, “Graph Theory With application to Engineering and Computer.Science.”, PHI.
+8. Krishnamurthy, V., “Combinatorics Theory & Application”, East-West Press Pvt. Ltd., New Delhi
+
+KCS 351H DATA STRUCTURE USING C LAB
+Write C Programs to illustrate the concept of the following:
+1. Sorting Algorithms-Non-Recursive.
+2. Sorting Algorithms-Recursive.
+3. Searching Algorithm.
+4. Implementation of Stack using Array.
+5. Implementation of Queue using Array.
+6. Implementation of Circular Queue using Array.
+7. Implementation of Stack using Linked List.
+8. Implementation of Queue using Linked List.
+9. Implementation of Circular Queue using Linked List.
+10. Implementation of Tree Structures, Binary Tree, Tree Traversal, Binary Search Tree, Insertion and Deletion in
+BST.
+11. Graph Implementation, BFS, DFS, Minimum cost spanning tree, shortest path algorithm.
+KCS 352H COMPUTER ORGANIZATION LAB
+1. Implementing HALF ADDER, FULL ADDER using basic logic gates
+2. Implementing Binary -to -Gray, Gray -to -Binary code conversions.
+3. Implementing 3-8 line DECODER.
+4. Implementing 4x1 and 8x1 MULTIPLEXERS.
+5. Verify the excitation tables of various FLIP-FLOPS.
+6. Design of an 8-bit Input/ Output system with four 8-bit Internal Registers.
+7. Design of an 8-bit ARITHMETIC LOGIC UNIT.
+8. Design the data path of a computer from its register transfer language description.
+9. Design the control unit of a computer using either hardwiring or microprogramming based on its register transfer
+language description.
+10. Implement a simple instruction set computer with a control unit and a data path.
+KCS 353H DISCRETE STRUCTURE & LOGIC LAB
+Programming Language/Tool Used: C and Mapple
+1. Write a program in C to create two sets and perform the Union operation on sets.
+2. Write a program in C to create two sets and perform the Intersectison operation on sets.
+3. Write a program in C to create two sets and perform the Difference operation on sets.
+4. Write a program in C to create two sets and perform the Symmetric Difference operation.
+5. Write a program in C to perform the Power Set operation on a set.
+6. Write a program in C to Display the Boolean Truth Table for AND, OR , NOT .
+7. Write a C Program to find Cartesian Product of two sets
+8. Write a program in C for minimum cost spanning tree.
+9. Write a program in C for finding shortest path in a Graph
+
+Note: Understanding of mathematical computation software Mapple to experiment the followings
+(exp. 10 to 25):
+10. Working of Computation software
+11. Discover a closed formula for a given recursive sequence vice-versa
+12. Recursion and Induction
+13. Practice of various set operations
+14. Counting
+15. Combinatorial equivalence
+16. Permutations and combinations
+17. Difference between structures, permutations and sets
+18. Implementation of a recursive counting technique
+19. The Birthday problem
+20. Poker Hands problem
+21. Baseball best-of-5 series: Experimental probabilities
+22. Baseball: Binomial Probability
+23. Expected Value Problems
+24. Basketball: One and One
+25. Binary Relations: Influence
+
+B.TECH.
+COMPUTER SCIENCE AND ENGINEERING - HINDI
+FOURTH SEMESTER (DETAILED SYLLABUS)
+KCS 401H OPERATING SYSTEM
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+CO 1 Understand the structure and functions of OS K K
+1, 2
+CO 2 Learn about Processes, Threads and Scheduling algorithms. K K
+1, 2
+CO 3 Understand the principles of concurrency and Deadlocks K
+2
+CO 4 Learn various memory management scheme K
+2
+CO 5 Study I/O management and File systems. K K
+2, 4
+DETAILED SYLLABUS 3-0-0
+Unit Topic Proposed
+Lecture
+Introduction : Operating system and functions, Classification of Operating systems- Batch,
+Interactive, Time sharing, Real Time System, Multiprocessor Systems, Multiuser Systems,
+I 08
+Multiprocess Systems, Multithreaded Systems, Operating System Structure- Layered structure,
+System Components, Operating System services, Reentrant Kernels, Monolithic and Microkernel
+Systems.
+Concurrent Processes: Process Concept, Principle of Concurrency, Producer / Consumer
+Problem, Mutual Exclusion, Critical Section Problem, Dekker’s solution, Peterson’s solution,
+II 08
+Semaphores, Test and Set operation; Classical Problem in Concurrency- Dining Philosopher
+Problem, Sleeping Barber Problem; Inter Process Communication models and Schemes, Process
+generation.
+CPU Scheduling: Scheduling Concepts, Performance Criteria, Process States, Process Transition
+Diagram, Schedulers, Process Control Block (PCB), Process address space, Process identification
+III
+information, Threads and their management, Scheduling Algorithms, Multiprocessor Scheduling. 08
+Deadlock: System model, Deadlock characterization, Prevention, Avoidance and detection,
+Recovery from deadlock.
+Memory Management: Basic bare machine, Resident monitor, Multiprogramming with fixed
+IV partitions, Multiprogramming with variable partitions, Protection schemes, Paging, Segmentation, 08
+Paged segmentation, Virtual memory concepts, Demand paging, Performance of demand paging,
+Page replacement algorithms, Thrashing, Cache memory organization, Locality of reference.
+I/O Management and Disk Scheduling: I/O devices, and I/O subsystems, I/O buffering, Disk
+V storage and disk scheduling, RAID. File System: File concept, File organization and access 08
+mechanism, File directories, and File sharing, File system implementation issues, File system
+protection and security.
+Text books:
+1. Silberschatz, Galvin and Gagne, “Operating Systems Concepts”, Wiley
+2. Sibsankar Halder and Alex A Aravind, “Operating Systems”, Pearson Education
+3. Harvey M Dietel, “ An Introduction to Operating System”, Pearson Education
+4. D M Dhamdhere, “Operating Systems : A Concept based Approach”, 2nd Edition,
+5. TMH 5. William Stallings, “Operating Systems: Internals and Design Principles ”, 6th Edition, Pearson
+Education
+
+KCS 402H THEORY OF AUTOMATA AND FORMAL LANGUAGES
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Analyze and design finite automata, pushdown automata, Turing machines, formal languages,
+CO 1 K K
+and grammars 4, 6
+Analyze and design, Turing machines, formal languages, and grammars
+CO 2 K K
+4, 6
+Demonstrate the understanding of key notions, such as algorithm, computability, decidability,
+CO 3 K K
+and complexity through problem solving 1, 5
+Prove the basic results of the Theory of Computation.
+CO 4 K K
+2, 3
+State and explain the relevance of the Church-Turing thesis.
+CO 5 K K
+1, 5
+DETAILED SYLLABUS 3-1-0
+Unit Topic Proposed
+Lecture
+Basic Concepts and Automata Theory: Introduction to Theory of Computation- Automata,
+Computability and Complexity, Alphabet, Symbol, String, Formal Languages, Deterministic
+Finite Automaton (DFA)- Definition, Representation, Acceptability of a String and Language, Non
+I 08
+Deterministic Finite Automaton (NFA), Equivalence of DFA and NFA, NFA with ε-Transition,
+Equivalence of NFA’s with and without ε-Transition, Finite Automata with output- Moore
+Machine, Mealy Machine, Equivalence of Moore and Mealy Machine, Minimization of Finite
+Automata, Myhill-Nerode Theorem, Simulation of DFA and NFA
+Regular Expressions and Languages: Regular Expressions, Transition Graph, Kleen’s Theorem,
+Finite Automata and Regular Expression- Arden’s theorem, Algebraic Method Using Arden’s
+II
+Theorem, Regular and Non-Regular Languages- Closure properties of Regular Languages, 08
+Pigeonhole Principle, Pumping Lemma, Application of Pumping Lemma, Decidability- Decision
+properties, Finite Automata and Regular Languages, Regular Languages and Computers,
+Simulation of Transition Graph and Regular language.
+Regular and Non-Regular Grammars: Context Free Grammar(CFG)-Definition, Derivations,
+Languages, Derivation Trees and Ambiguity, Regular Grammars-Right Linear and Left Linear
+III
+grammars, Conversion of FA into CFG and Regular grammar into FA, Simplification of CFG, 08
+Normal Forms- Chomsky Normal Form(CNF), Greibach Normal Form (GNF), Chomsky
+Hierarchy, Programming problems based on the properties of CFGs.
+Push Down Automata and Properties of Context Free Languages: Nondeterministic Pushdown
+Automata (NPDA)- Definition, Moves, A Language Accepted by NPDA, Deterministic Pushdown
+IV Automata(DPDA) and Deterministic Context free Languages(DCFL), Pushdown Automata for 08
+Context Free Languages, Context Free grammars for Pushdown Automata, Two stack Pushdown
+Automata, Pumping Lemma for CFL, Closure properties of CFL, Decision Problems of CFL,
+Programming problems based on the properties of CFLs.
+Turing Machines and Recursive Function Theory : Basic Turing Machine Model,
+V Representation of Turing Machines, Language Acceptability of Turing Machines, Techniques for
+Turing Machine Construction, Modifications of Turing Machine, Turing Machine as Computer of 08
+Integer Functions, Universal Turing machine, Linear Bounded Automata, Church’s Thesis,
+Recursive and Recursively Enumerable language, Halting Problem, Post’s Correspondance
+Problem, Introduction to Recursive Function Theory.
+Text books:
+1. Introduction to Automata theory, Languages and Computation, J.E.Hopcraft, R.Motwani, and Ullman. 2nd
+edition, Pearson Education Asia
+2. Introduction to languages and the theory of computation, J Martin, 3rd Edition, Tata McGraw Hill
+3. Elements and Theory of Computation, C Papadimitrou and C. L. Lewis, PHI
+4. Mathematical Foundation of Computer Science, Y.N.Singh, New Age International
+
+KCS 403H MICROPROCESSOR
+Course Outcome ( CO) Bloom’s Knowledge Level (KL)
+At the end of course , the student will be able to understand
+Apply a basic concept of digital fundamentals to Microprocessor based personal computer
+CO 1 K K
+system. 3, 4
+Analyze a detailed s/w & h/w structure of the Microprocessor.
+CO 2 K K
+2, 4
+Illustrate how the different peripherals (8085/8086) are interfaced with Microprocessor.
+CO 3 K
+3
+Analyze the properties of Microprocessors(8085/8086)
+CO 4 K
+4
+Evaluate the data transfer information through serial & parallel ports.
+CO 5 K
+5
+DETAILED SYLLABUS 3-1-0
+Unit Topic Proposed
+Lecture
+Microprocessor evolution and types, microprocessor architecture and operation of its components,
+I 08
+addressing modes, interrupts, data transfer schemes, instruction and data flow, timer and timing
+diagram, Interfacing devices.
+Pin diagram and internal architecture of 8085 microprocessor, registers, ALU, Control & status,
+II
+interrupt and machine cycle. Instruction sets. Addressing modes. Instruction formats Instruction 08
+Classification: data transfer, arithmetic operations, logical operations, branching operations,
+machine control and assembler directives.
+Architecture of 8086 microprocessor: register organization, bus interface unit, execution unit,
+III
+memory addressing, and memory segmentation. Operating modes. Instruction sets, instruction 08
+format, Types of instructions. Interrupts: hardware and software interrupts.
+Assembly language programming based on intel 8085/8086. Instructions, data transfer, arithmetic,
+IV 08
+logic, branch operations, looping, counting, indexing, programming techniques, counters and time
+delays, stacks and subroutines, conditional call and return instructions
+V Peripheral Devices: 8237 DMA Controller, 8255 programmable peripheral interface,
+8253/8254programmable timer/counter, 8259 programmable interrupt controller, 8251 USART 08
+and RS232C.
+Text books:
+1. Gaonkar, Ramesh S , “Microprocessor Architecture, Programming and Applications with
+2. 8085”, Penram International Publishing.
+3. Ray A K , Bhurchandi K M , “Advanced Microprocessors and Peripherals”, TMH
+4. Hall D V ,”Microprocessor Interfacing’, TMH
+5. Liu and, “ Introduction to Microprocessor”, TMH
+6. Brey, Barry B, “INTEL Microprocessors”, PHI
+7. Renu Sigh & B.P. Gibson G A , “ Microcomputer System: The 8086/8088 family’’ ,PHI
+8. Aditya P Mathur Sigh, “Microprocessor, Interfacing and Applications M Rafiqzzaman, “Microprocessors,
+Theory and Applications
+9. J.L. Antonakos, An Introduction to the Intel Family of Microprocessors, Pearson, 1999
+
+KCS 451H OPERATING SYSTEM LAB
+1. Study of hardware and software requirements of different operating systems (UNIX,LINUX,WINDOWS XP,
+WINDOWS7/8
+2. Execute various UNIX system calls for
+i. Process management
+ii. File management
+iii. Input/output Systems calls
+3. Implement CPU Scheduling Policies:
+i. SJF
+ii. Priority
+iii. FCFS
+iv. Multi-level Queue
+4. Implement file storage allocation technique:
+i. Contiguous(using array)
+ii. Linked –list(using linked-list)
+iii. Indirect allocation (indexing)
+5. Implementation of contiguous allocation techniques:
+i. Worst-Fit
+ii. Best- Fit
+iii. First- Fit
+6. Calculation of external and internal fragmentation
+i. Free space list of blocks from system
+ii. List process file from the system
+7. Implementation of compaction for the continually changing memory layout and calculate total movement of data
+8. Implementation of resource allocation graph RAG)
+9. Implementation of Banker‟s algorithm
+10. Conversion of resource allocation graph (RAG) to wait for graph (WFG) for each type of method used for storing
+graph.
+11. Implement the solution for Bounded Buffer (producer-consumer)problem using inter process communication
+techniques-Semaphores
+12. Implement the solutions for Readers-Writers problem using inter process communication technique -Semaphore
+KCS 452H MICROPROCESSOR LAB
+1. Write a program using 8085 Microprocessor for Decimal, Hexadecimal addition and subtraction of two Numbers.
+2. Write a program using 8085 Microprocessor for addition and subtraction of two BCD numbers.
+3. To perform multiplication and division of two 8 bit numbers using 8085.
+4. To find the largest and smallest number in an array of data using 8085 instruction set.
+5. To write a program to arrange an array of data in ascending and descending order.
+6. To convert given Hexadecimal number into its equivalent ASCII number and vice versa using 8085 instruction set.
+7. To write a program to initiate 8251 and to check the transmission and reception of character.
+8. To interface 8253 programmable interval timer to 8085 and verify the operation of 8253 in six different modes.
+9. To interface DAC with 8085 to demonstrate the generation of square, saw tooth and triangular wave.
+10. Serial communication between two 8085 through RS-232 C port.
+
+KCS 453H PYTHON LANGUAGE PROGRAMMING LAB
+1. To write a python program that takes in command line arguments as input and print the number of arguments.
+2. To write a python program to perform Matrix Multiplication.
+3. To write a python program to compute the GCD of two numbers.
+4. To write a python program to find the most frequent words in a text file.
+5. To write a python program find the square root of a number (Newton’s method).
+6. To write a python program exponentiation (power of a number).
+7. To write a python program find the maximum of a list of numbers.
+8. To write a python program linear search.
+9. To write a python program Binary search.
+10. To write a python program selection sort.
+11. To write a python program Insertion sort.
+12. To write a python program merge sort.
+13. To write a python program first n prime numbers.
+14. To write a python program simulate bouncing ball in Pygame.

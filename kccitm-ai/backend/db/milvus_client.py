@@ -285,3 +285,75 @@ class MilvusSearchClient:
             })
 
         return formatted
+
+    # ── AKTU Knowledge search (separate collection) ──────────────────────────
+
+    def search_aktu(
+        self, query_text: str, query_embedding: list[float], k: int = 10,
+    ) -> list[dict]:
+        """
+        Search the aktu_knowledge collection using hybrid (dense + BM25).
+        Returns results with text, score, source_file, content_type.
+
+        Does NOT touch the student_results collection.
+        """
+        aktu_collection = _settings.MILVUS_AKTU_COLLECTION
+
+        try:
+            stats = self.client.get_collection_stats(aktu_collection)
+            if int(stats.get("row_count", 0)) == 0:
+                return []
+        except Exception:
+            return []
+
+        output_fields = ["text", "source_file", "content_type", "chunk_index"]
+
+        try:
+            from pymilvus import AnnSearchRequest, RRFRanker
+
+            dense_req = AnnSearchRequest(
+                data=[query_embedding],
+                anns_field="dense",
+                param={"metric_type": "COSINE", "params": {"nprobe": 16}},
+                limit=k,
+            )
+            sparse_req = AnnSearchRequest(
+                data=[query_text],
+                anns_field="sparse",
+                param={"metric_type": "BM25"},
+                limit=k,
+            )
+
+            results = self.client.hybrid_search(
+                collection_name=aktu_collection,
+                reqs=[dense_req, sparse_req],
+                ranker=RRFRanker(k=60),
+                limit=k,
+                output_fields=output_fields,
+            )
+
+            formatted = []
+            hits = results[0] if isinstance(results, list) and results else results
+            for hit in hits:
+                entity = hit.get("entity", {}) if isinstance(hit, dict) else {}
+                score = hit.get("distance", 0.0) if isinstance(hit, dict) else getattr(hit, "distance", 0.0)
+                if not entity:
+                    try:
+                        entity = {f: hit.entity.get(f) for f in output_fields}
+                        score = hit.distance
+                    except Exception:
+                        pass
+                formatted.append({
+                    "text": entity.get("text", ""),
+                    "score": score,
+                    "metadata": {
+                        "source_file": entity.get("source_file", ""),
+                        "content_type": entity.get("content_type", ""),
+                        "chunk_index": entity.get("chunk_index", 0),
+                    },
+                })
+            return formatted
+
+        except Exception as exc:
+            logger.warning("AKTU search failed: %s", exc)
+            return []

@@ -120,46 +120,33 @@ When users mention abbreviated subject names, expand them before searching:
 _LOGICCAT_EXTENDED_PROMPT = """
 
 === LOGICCAT BENCHMARK MODE ===
-Reasoning patterns based on common error analysis (44 failures studied):
+Additional reasoning patterns for cross-database evaluation:
 
-TOP ERROR #1: WRONG COLUMN SELECTION (44%% of wrong results)
-- ALWAYS read the column names from the schema EXACTLY. Do NOT guess column names.
-- If the question says "total rotor disc area", find the EXACT column name in the schema (e.g., Total_Disk_Area, NOT Max_Gross_Weight).
-- If the question mentions a value by name, SELECT the column that stores that value — don't hardcode the number.
-  BAD:  SELECT 67054745 / (1 - 0.015) (hardcoded number)
-  GOOD: SELECT Total_Passengers / (1 + Change_2019 / 100) FROM airport (uses column)
-- When a question gives you specific numbers, those are CONTEXT — still use the database columns.
+MATHEMATICAL REASONING:
+- For "if X increases by Y%": multiply by (1 + Y/100)
+- For "ratio of A to B": SELECT A / B
+- For "percentage of A in B": SELECT ROUND(A * 100.0 / B, 2)
+- For unit conversions: apply the conversion factor in SELECT
 
-TOP ERROR #2: WRONG COLUMN REFERENCES IN EXECUTION (53%% of exec errors)
-- Before writing column_name in SQL, VERIFY it exists in the schema above.
-- Use table.column_name format to avoid ambiguity.
-- If a column doesn't exist, check for similar column names in the schema.
+MULTI-STEP REASONING:
+- Break complex questions into sub-calculations
+- Use subqueries for intermediate results
+- Chain calculations: SELECT (subquery1) / (subquery2)
 
-TOP ERROR #3: MATH/PHYSICS FORMULAS IN SQL (26%% of wrong results)
-- "If X increases by Y%%": new = column * (1 + Y/100) → column * 1.20 for 20%%
-- "Lift force": mass * 9.81 (use the COLUMN, not a hardcoded value)
-- "Growth over N years": column * POW(1 + rate/100, N)
-- "Whether suitable": use CASE WHEN calculated_value > threshold THEN 'Suitable' ELSE 'Not Suitable' END
-- "Unit conversion lb to kg": column * 0.453592
-- ALWAYS use database column values in formulas, NOT numbers from the question text.
+CONDITIONAL LOGIC:
+- "If condition, then X, otherwise Y": use CASE WHEN ... THEN ... ELSE ... END
+- "Whether X exceeds Y": SELECT (X > Y) AS result or use CASE WHEN
 
-TOP ERROR #4: MISSING CASE WHEN (11%% of wrong results)
-- "Whether X exceeds Y" → CASE WHEN X > Y THEN 'Yes' ELSE 'No' END
-- "Is it suitable?" → CASE WHEN condition THEN 'Suitable' ELSE 'Not Suitable' END
-- "Classify as high/low" → CASE WHEN value > threshold THEN 'High' ELSE 'Low' END
-- If the question asks for a yes/no or classification answer, ALWAYS use CASE WHEN.
+CROSS-TABLE REASONING:
+- Always check foreign key relationships before joining
+- Use the exact column names from the schema
+- Do NOT assume column names — verify they exist in the schema above
 
-TOP ERROR #5: SYNTAX ERRORS (29%% of exec errors)
-- Table name `match` is a MySQL reserved word — use backticks: `match`
-- Do NOT use OVER() or window functions — use subqueries instead
-- For string concat use CONCAT(a, b), not a || b
-- Verify all table aliases are defined in FROM/JOIN before using them
-
-CRITICAL RULE: USE DATABASE COLUMNS, NOT HARDCODED NUMBERS
-When the question says "a helicopter has disc area 46.2 and loading 14":
-  BAD:  SELECT 46.2 * 14 AS Lift
-  GOOD: SELECT Total_Disk_Area * Max_Disk_Loading AS Lift FROM aircraft WHERE Aircraft = 'Robinson R-22'
-The numbers in the question are for CONTEXT. Always query the actual database columns.
+AVOID THESE COMMON ERRORS:
+- Do NOT use window functions (OVER, PARTITION BY) unless sure MySQL version supports them
+- Do NOT reference columns that don't exist in the schema
+- Do NOT use SQLite syntax (e.g., || for concat) — use MySQL CONCAT()
+- Always use backticks for reserved word column names
 """
 
 
@@ -953,53 +940,6 @@ class SQLPipeline:
     def _validate_sql(self, sql: str) -> str | None:
         return SQLValidator.validate(sql)
 
-    @staticmethod
-    def _should_retry(result: SQLResult) -> tuple[bool, str]:
-        """
-        Corruption prevention (ErrorLLM, Hong et al., 2026):
-        Don't retry SQL that already returned valid results.
-        Prevents corrupting 30-40% of already-correct SQL.
-        """
-        # Execution error — always retry
-        if not result.success and result.error:
-            return True, f"Execution error: {result.error[:80]}"
-
-        # Zero rows — retry (likely wrong filter)
-        if result.success and result.row_count == 0:
-            return True, "Query returned 0 rows"
-
-        # Has results — check sanity before deciding
-        if result.success and result.row_count > 0:
-            for row in result.rows[:5]:
-                if isinstance(row, dict):
-                    for key, val in row.items():
-                        if "sgpa" in key.lower() and val is not None:
-                            try:
-                                if float(val) > 10:
-                                    return True, f"SGPA value {val} > 10 — impossible"
-                            except (ValueError, TypeError):
-                                pass
-            # Results look valid — DON'T retry
-            return False, "SQL executed with valid results — no retry needed"
-
-        return False, "Result looks valid"
-
-    @staticmethod
-    def _build_error_guided_context(query: str, sql: str, error: str, row_count: int) -> str:
-        """
-        Error-guided retry (ErrorLLM): classify the error and give specific fix guidance.
-        """
-        from adaptive.failure_classifier import classify_sql_error
-
-        info = classify_sql_error(query=query, generated_sql=sql, error_msg=error, row_count=row_count)
-
-        return (
-            f"Your previous SQL had an error.\n"
-            f"ERROR TYPE: {info['error_type']} ({info['subtype']})\n"
-            f"DETAILS: {info['details']}\n\n"
-            f"Fix ONLY the part that's wrong. Keep everything else the same."
-        )
-
     async def _execute_with_retries(
         self,
         generated: SQLResult,
@@ -1008,10 +948,12 @@ class SQLPipeline:
         linked_schema_text: str,
     ) -> SQLResult:
         """
-        Execute SQL with ErrorLLM-inspired self-correction:
-          - Corruption prevention: skip retry if results look valid
-          - Error-guided retry: classify error type and give specific fix guidance
-          - Max retries controlled by config (2 normal, 3 LogicCat)
+        UPGRADE 2: Execute SQL with self-correction on error or zero rows.
+
+        Retry strategy:
+          - On execution error: regenerate with error message at lower temperature
+          - On zero rows (when results expected): regenerate with relaxed filters
+          - Max 2 retries total
         """
         current = generated
         retries = 0
@@ -1019,26 +961,19 @@ class SQLPipeline:
         while retries <= self.max_retries:
             result = await self._execute_sql(current)
 
-            # Corruption prevention: if result is valid, don't retry
-            should_retry, reason = self._should_retry(result)
-            if not should_retry:
+            if result.success and result.row_count > 0:
                 result.retries_used = retries
-                if retries > 0:
-                    logger.info("Corruption prevention: keeping result — %s", reason)
                 return result
 
             if not result.success and retries < self.max_retries:
-                # Error-guided retry with classified error context
-                error_context = self._build_error_guided_context(
-                    query, current.sql, result.error, result.row_count,
-                )
+                # Execution error — retry with error context
                 logger.info(
                     "SQL execution failed (retry %d/%d): %s",
                     retries + 1, self.max_retries, result.error[:100],
                 )
                 current = await self._generate_sql(
                     query, route_result, linked_schema_text,
-                    error_context=error_context,
+                    error_context=result.error,
                     previous_sql=current.sql,
                     temperature=0.01,
                 )
