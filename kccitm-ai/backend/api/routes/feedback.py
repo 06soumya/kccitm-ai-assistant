@@ -69,7 +69,7 @@ async def submit_feedback(
     1. Persist the explicit rating.
     2. Compute composite quality score.
     3. Classify failure mode (if low quality).
-    4. Add to healing queue (if quality < 0.50).
+    4. Add to healing queue (if quality <= 0.50).
     5. Attempt immediate healing (if quality < 0.35).
     6. Update chunk analytics in background.
     """
@@ -146,7 +146,7 @@ async def submit_feedback(
     )
 
     # 4. Add to healing queue for moderate failures
-    if failure_category and quality_score < 0.50:
+    if failure_category and quality_score <= 0.50:
         background_tasks.add_task(
             add_to_healing_queue,
             feedback_id=feedback_id,

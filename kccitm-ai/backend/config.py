@@ -74,6 +74,7 @@ class Settings(BaseSettings):
 
     # ── SQL pipeline ──────────────────────────────────────────────────────────
     USE_DYNAMIC_SCHEMA: bool = True   # True = auto-discover schema; False = hardcoded
+    LOGICCAT_MODE: bool = False       # True only for benchmark evaluation (extra retries, extended prompts)
 
 
 # Singleton instance — import this everywhere

@@ -49,9 +49,9 @@ def classify_failure(
     """
     Return a failure category string or None if the response is acceptable.
 
-    Only classifies when quality_score < 0.50.
+    Only classifies when quality_score <= 0.50.
     """
-    if quality_score >= 0.50:
+    if quality_score > 0.50:
         return None
 
     # 1. SQL error

@@ -563,9 +563,6 @@ class Orchestrator:
         "improved", "dropped", "trend", "change", "across",
         "more than", "less than", "greater than", "above", "below",
         "sgpa", "cgpa", "gpa", "back paper",
-        "results semester", "results sem", "toppers in", "topper in",
-        "dbms", "dsa", "pps", "oops", "oop", "os ", "cn ", "coa",
-        "constitution", "mathematics", "physics", "chemistry",
     }
 
     def _detect_student_lookup(

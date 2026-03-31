@@ -172,6 +172,9 @@ async def evaluate(
 ) -> list[BenchResult]:
     """Run the LogicCat benchmark evaluation."""
 
+    # Enable LogicCat mode for extended prompts and extra retries
+    settings.LOGICCAT_MODE = True
+
     with open(DATASET_PATH) as f:
         dataset = json.load(f)
 
@@ -345,6 +348,9 @@ async def evaluate(
     with open(out_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"\nResults saved to {out_path}")
+
+    # Reset LogicCat mode
+    settings.LOGICCAT_MODE = False
 
     return results
 
