@@ -1,0 +1,4 @@
+FROM ./kccitm-v2-q4km.gguf
+PARAMETER temperature 0.1
+PARAMETER num_ctx 4096
+SYSTEM "You are a SQL assistant for KCCITM student database."

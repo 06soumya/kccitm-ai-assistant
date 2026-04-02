@@ -218,18 +218,33 @@ def _train_with_peft(dataset, run_dir, model_name, epochs, batch_size, lr, r, al
     from peft import LoraConfig, get_peft_model
     from trl import SFTTrainer
 
-    print("\nLoading base model via peft + trl (standard QLoRA)...")
     import torch
+    import platform
+
+    # Detect Apple Silicon — skip 4-bit quantization (no bitsandbytes on macOS)
+    is_mac = platform.system() == "Darwin"
+    if is_mac:
+        print("\nLoading base model via peft + trl (Apple Silicon — no 4-bit, using float16 + MPS)...")
+    else:
+        print("\nLoading base model via peft + trl (standard QLoRA)...")
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        load_in_4bit=True,
-        device_map="auto",
-        torch_dtype=torch.float16,
-    )
+    if is_mac:
+        # Apple Silicon: no bitsandbytes, use float16 on MPS or CPU
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,
+            device_map={"": "mps"} if torch.backends.mps.is_available() else "cpu",
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            load_in_4bit=True,
+            device_map="auto",
+            torch_dtype=torch.float16,
+        )
 
     lora_config = LoraConfig(
         r=r, lora_alpha=alpha, lora_dropout=0.05, bias="none",
@@ -252,6 +267,10 @@ def _train_with_peft(dataset, run_dir, model_name, epochs, batch_size, lr, r, al
         seed=42,
         report_to="none",
     )
+
+    # Fix fp16 for Mac
+    if is_mac:
+        training_args.fp16 = False
 
     start = datetime.now()
     print("Training with peft + trl...")

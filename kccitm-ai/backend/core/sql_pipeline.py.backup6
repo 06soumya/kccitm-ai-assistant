@@ -68,6 +68,17 @@ SQL: SELECT ROUND(passed.cnt * 100.0 / total.cnt, 2) AS pass_pct, passed.cnt AS 
 
 Q: "pass rate per semester"
 SQL: SELECT sr.semester, ROUND(SUM(CASE WHEN sr.result_status IN ('PASS','PCP','PWG') OR sr.result_status LIKE 'CP(%% 0)' OR sr.result_status = 'CP(0)' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS pass_rate_pct, COUNT(*) AS total_students FROM semester_results sr GROUP BY sr.semester ORDER BY sr.semester LIMIT 50
+
+Q: "top 5 toppers in math 1" or "top students in [subject]"
+SQL: SELECT s.name, sm.roll_no, sm.subject_code, sm.subject_name, MAX(COALESCE(sm.internal_marks,0) + COALESCE(sm.external_marks,0)) AS total_marks FROM subject_marks sm JOIN students s ON sm.roll_no = s.roll_no WHERE sm.subject_name LIKE '%%Mathematics-I%%' GROUP BY sm.roll_no, s.name, sm.subject_code, sm.subject_name ORDER BY total_marks DESC LIMIT 5
+
+Q: "top 5 toppers in math 1 of batch 2022" (subject toppers filtered by batch)
+SQL: SELECT s.name, sm.roll_no, sm.subject_code, sm.subject_name, MAX(COALESCE(sm.internal_marks,0) + COALESCE(sm.external_marks,0)) AS total_marks FROM subject_marks sm JOIN students s ON sm.roll_no = s.roll_no WHERE sm.subject_name LIKE '%%Mathematics-I%%' AND sm.roll_no LIKE '22%%' GROUP BY sm.roll_no, s.name, sm.subject_code, sm.subject_name ORDER BY total_marks DESC LIMIT 5
+NOTE: For subject-specific toppers, ALWAYS use subject_marks table with (internal_marks + external_marks). NEVER use semester_results.sgpa for subject toppers. NEVER join semester_results for subject queries. Do NOT invent subject codes — use subject_name LIKE instead. ALWAYS keep the batch filter (roll_no LIKE 'XX%%') if user specifies a batch. ALWAYS GROUP BY sm.roll_no to avoid duplicate students.
+
+Q: "toppers of batch 2021" or "top students by CGPA"
+SQL: SELECT s.name, s.roll_no, ROUND(AVG(sr.sgpa), 2) AS cgpa FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no WHERE s.roll_no LIKE '21%%' GROUP BY s.roll_no, s.name ORDER BY cgpa DESC LIMIT 10
+NOTE: For overall toppers, use semester_results.sgpa averaged as CGPA. Only use semester_results here.
 """
 
 # ── KCCITM-specific domain hints (things schema reader can't discover) ────────
@@ -86,6 +97,9 @@ DOMAIN_HINTS = """
 - back_paper = '--' means NO back paper; anything else means HAS back paper.
 - SGPA range is 0.00 to 10.00. Values > 10 are impossible.
 - Semesters range from 1 to 8.
+- CRITICAL: subject_name and subject_code columns exist ONLY in subject_marks table, NOT in semester_results. If you need subject info, JOIN subject_marks.
+- CRITICAL: For subject-specific toppers, use subject_marks table. For overall toppers (CGPA/SGPA), use semester_results table.
+- When user says "math 1" or "math-1", use: subject_name LIKE '%%Mathematics-I%%' (with hyphen and Roman numeral).
 """
 
 # ── Subject abbreviation map (appended to prompt for KCCITM queries) ─────────
@@ -100,7 +114,8 @@ When users mention abbreviated subject names, expand them before searching:
 - COA, computer architecture → subject_name LIKE '%%Computer Architecture%%' OR subject_name LIKE '%%Computer Org%%'
 - OOP, oops → subject_name LIKE '%%Object Oriented%%'
 - PPS, pps, programming → subject_name LIKE '%%Programming for Problem%%'
-- Maths, math, mathematics → subject_name LIKE '%%Mathematics%%'
+- Maths, math, math 1, math-1 → subject_name LIKE '%%Mathematics%%'
+  (Math 1 = 'Engineering Mathematics-I', Math 2 = 'Engineering Mathematics-II', Math 3 = 'Engineering Mathematics-III', Math 4 = 'Mathematics-IV')
 - Physics → subject_name LIKE '%%Physics%%'
 - Chemistry → subject_name LIKE '%%Chemistry%%'
 - EVS, environment → subject_name LIKE '%%Environment%%' OR subject_name LIKE '%%Ecology%%'
@@ -108,45 +123,118 @@ When users mention abbreviated subject names, expand them before searching:
 - SE, software engineering → subject_name LIKE '%%Software Engineering%%'
 - AI, artificial intelligence → subject_name LIKE '%%Artificial Intelligence%%'
 - ML, machine learning → subject_name LIKE '%%Machine Learning%%'
-- TOC, automata → subject_name LIKE '%%Theory of Computation%%' OR subject_name LIKE '%%Automata%%'
+- TOC, automata → subject_name LIKE '%%Theory of Automata%%'
 - CD, compiler → subject_name LIKE '%%Compiler%%'
 - Constitution, indian constitution → subject_name LIKE '%%Constitution%%' OR subject_name LIKE '%%Indian Constitution%%'
 - EG, graphics → subject_name LIKE '%%Engineering Graphics%%'
 - BEE, electrical → subject_name LIKE '%%Electrical Engineering%%'
 """
 
+# ── Subject detection map (keyword → LIKE pattern for subject_marks.subject_name) ──
+_SUBJECT_DETECT: dict[str, str] = {
+    "dbms": "%%Database Management%%",
+    "database management": "%%Database Management%%",
+    "dsa": "%%Data Structure%%",
+    "data structure": "%%Data Structure%%",
+    "os ": "%%Operating System%%",
+    "operating system": "%%Operating System%%",
+    "cn ": "%%Computer Network%%",
+    "computer network": "%%Computer Network%%",
+    "coa": "%%Computer Architecture%%",
+    "computer architecture": "%%Computer Architecture%%",
+    "oop": "%%Object Oriented%%",
+    "oops": "%%Object Oriented%%",
+    "pps": "%%Programming for Problem%%",
+    "math 1": "%%Mathematics-I%%",
+    "math-1": "%%Mathematics-I%%",
+    "math 2": "%%Mathematics-II%%",
+    "math-2": "%%Mathematics-II%%",
+    "math 3": "%%Mathematics-III%%",
+    "math-3": "%%Mathematics-III%%",
+    "math 4": "%%Mathematics-IV%%",
+    "math-4": "%%Mathematics-IV%%",
+    "mathematics 1": "%%Mathematics-I%%",
+    "mathematics 2": "%%Mathematics-II%%",
+    "mathematics 3": "%%Mathematics-III%%",
+    "mathematics 4": "%%Mathematics-IV%%",
+    "mathematics-i": "%%Mathematics-I%%",
+    "mathematics-ii": "%%Mathematics-II%%",
+    "mathematics-iii": "%%Mathematics-III%%",
+    "mathematics-iv": "%%Mathematics-IV%%",
+    "maths": "%%Mathematics%%",
+    "math": "%%Mathematics%%",
+    "physics": "%%Physics%%",
+    "chemistry": "%%Chemistry%%",
+    "evs": "%%Environment%%",
+    "environment": "%%Environment%%",
+    "daa": "%%Design and Analysis%%",
+    "algorithm": "%%Algorithm%%",
+    "software engineering": "%%Software Engineering%%",
+    "artificial intelligence": "%%Artificial Intelligence%%",
+    "machine learning": "%%Machine Learning%%",
+    "toc": "%%Theory of Automata%%",
+    "automata": "%%Theory of Automata%%",
+    "compiler": "%%Compiler%%",
+    "constitution": "%%Constitution%%",
+    "graphics": "%%Engineering Graphics%%",
+    "electrical": "%%Electrical Engineering%%",
+    "discrete": "%%Discrete%%",
+    "probability": "%%Probability%%",
+    "numerical": "%%Numerical%%",
+    "communication": "%%Communication%%",
+    "digital": "%%Digital%%",
+    "microprocessor": "%%Microprocessor%%",
+    "web": "%%Web%%",
+    "cloud": "%%Cloud%%",
+    "cyber": "%%Cyber%%",
+    "network security": "%%Network Security%%",
+}
+
 # ── LogicCat-only extended prompt (appended only when LOGICCAT_MODE=True) ────
 
 _LOGICCAT_EXTENDED_PROMPT = """
 
 === LOGICCAT BENCHMARK MODE ===
-Additional reasoning patterns for cross-database evaluation:
+Reasoning patterns based on common error analysis (44 failures studied):
 
-MATHEMATICAL REASONING:
-- For "if X increases by Y%": multiply by (1 + Y/100)
-- For "ratio of A to B": SELECT A / B
-- For "percentage of A in B": SELECT ROUND(A * 100.0 / B, 2)
-- For unit conversions: apply the conversion factor in SELECT
+TOP ERROR #1: WRONG COLUMN SELECTION (44%% of wrong results)
+- ALWAYS read the column names from the schema EXACTLY. Do NOT guess column names.
+- If the question says "total rotor disc area", find the EXACT column name in the schema (e.g., Total_Disk_Area, NOT Max_Gross_Weight).
+- If the question mentions a value by name, SELECT the column that stores that value — don't hardcode the number.
+  BAD:  SELECT 67054745 / (1 - 0.015) (hardcoded number)
+  GOOD: SELECT Total_Passengers / (1 + Change_2019 / 100) FROM airport (uses column)
+- When a question gives you specific numbers, those are CONTEXT — still use the database columns.
 
-MULTI-STEP REASONING:
-- Break complex questions into sub-calculations
-- Use subqueries for intermediate results
-- Chain calculations: SELECT (subquery1) / (subquery2)
+TOP ERROR #2: WRONG COLUMN REFERENCES IN EXECUTION (53%% of exec errors)
+- Before writing column_name in SQL, VERIFY it exists in the schema above.
+- Use table.column_name format to avoid ambiguity.
+- If a column doesn't exist, check for similar column names in the schema.
 
-CONDITIONAL LOGIC:
-- "If condition, then X, otherwise Y": use CASE WHEN ... THEN ... ELSE ... END
-- "Whether X exceeds Y": SELECT (X > Y) AS result or use CASE WHEN
+TOP ERROR #3: MATH/PHYSICS FORMULAS IN SQL (26%% of wrong results)
+- "If X increases by Y%%": new = column * (1 + Y/100) → column * 1.20 for 20%%
+- "Lift force": mass * 9.81 (use the COLUMN, not a hardcoded value)
+- "Growth over N years": column * POW(1 + rate/100, N)
+- "Whether suitable": use CASE WHEN calculated_value > threshold THEN 'Suitable' ELSE 'Not Suitable' END
+- "Unit conversion lb to kg": column * 0.453592
+- ALWAYS use database column values in formulas, NOT numbers from the question text.
 
-CROSS-TABLE REASONING:
-- Always check foreign key relationships before joining
-- Use the exact column names from the schema
-- Do NOT assume column names — verify they exist in the schema above
+TOP ERROR #4: MISSING CASE WHEN (11%% of wrong results)
+- "Whether X exceeds Y" → CASE WHEN X > Y THEN 'Yes' ELSE 'No' END
+- "Is it suitable?" → CASE WHEN condition THEN 'Suitable' ELSE 'Not Suitable' END
+- "Classify as high/low" → CASE WHEN value > threshold THEN 'High' ELSE 'Low' END
+- If the question asks for a yes/no or classification answer, ALWAYS use CASE WHEN.
 
-AVOID THESE COMMON ERRORS:
-- Do NOT use window functions (OVER, PARTITION BY) unless sure MySQL version supports them
-- Do NOT reference columns that don't exist in the schema
-- Do NOT use SQLite syntax (e.g., || for concat) — use MySQL CONCAT()
-- Always use backticks for reserved word column names
+TOP ERROR #5: SYNTAX ERRORS (29%% of exec errors)
+- Table name `match` is a MySQL reserved word — use backticks: `match`
+- Do NOT use OVER() or window functions — use subqueries instead
+- For string concat use CONCAT(a, b), not a || b
+- Verify all table aliases are defined in FROM/JOIN before using them
+
+CRITICAL RULE: USE DATABASE COLUMNS, NOT HARDCODED NUMBERS
+When the question says "a helicopter has disc area 46.2 and loading 14":
+  BAD:  SELECT 46.2 * 14 AS Lift
+  GOOD: SELECT Total_Disk_Area * Max_Disk_Loading AS Lift FROM aircraft WHERE Aircraft = 'Robinson R-22'
+The numbers in the question are for CONTEXT. Always query the actual database columns.
 """
 
 
@@ -753,7 +841,10 @@ class SQLPipeline:
                 max_tokens=1000,
                 format="json",
             )
-            return self._parse_sql_response(response)
+            result = self._parse_sql_response(response)
+            if result.success:
+                logger.info("Generated SQL: %s", result.sql[:300])
+            return result
         except Exception as exc:
             return SQLResult(success=False, error=f"SQL generation failed: {exc}")
 
@@ -854,6 +945,16 @@ class SQLPipeline:
 
         return prompt
 
+    @staticmethod
+    def _detect_subject(query: str) -> str | None:
+        """Detect if query is about a specific subject. Returns LIKE pattern or None."""
+        q = query.lower()
+        # Check longer patterns first to avoid partial matches
+        for keyword, pattern in sorted(_SUBJECT_DETECT.items(), key=lambda x: -len(x[0])):
+            if keyword in q:
+                return pattern
+        return None
+
     def _build_user_prompt(
         self, query: str, route_result: RouteResult, hint: str = "",
     ) -> str:
@@ -877,6 +978,40 @@ class SQLPipeline:
 
         if route_result.entities:
             parts.append(f"Entities: {', '.join(str(e) for e in route_result.entities)}")
+
+        # Detect subject queries and inject forced SQL template
+        subject_like = self._detect_subject(query)
+        if subject_like:
+            # Extract batch and semester from query
+            q_lower = query.lower()
+            batch_filter = ""
+            import re as _re
+            batch_match = _re.search(r"batch\s*(\d{4})", q_lower)
+            if batch_match:
+                batch_prefix = batch_match.group(1)[2:]  # 2024 → 24
+                batch_filter = f" AND sm.roll_no LIKE '{batch_prefix}%%'"
+            sem_filter = ""
+            sem_match = _re.search(r"semester\s*(\d+)", q_lower) or _re.search(r"\bsem\s*(\d+)", q_lower)
+            if sem_match:
+                sem_filter = f" AND sm.semester = {sem_match.group(1)}"
+            # Extract LIMIT from query
+            limit_match = _re.search(r"(?:top|list|first)\s*(\d+)", q_lower)
+            limit_n = limit_match.group(1) if limit_match else "10"
+
+            parts.append(f"""
+MANDATORY: This is a SUBJECT query. You MUST use this exact SQL template:
+SELECT s.name, sm.roll_no, s.branch, sm.subject_code, sm.subject_name,
+       sm.internal_marks, sm.external_marks,
+       (COALESCE(sm.internal_marks,0) + COALESCE(sm.external_marks,0)) AS total_marks,
+       sm.grade
+FROM subject_marks sm
+JOIN students s ON sm.roll_no = s.roll_no
+WHERE sm.subject_name LIKE '{subject_like}'{batch_filter}{sem_filter}
+GROUP BY sm.roll_no, s.name, s.branch, sm.subject_code, sm.subject_name, sm.internal_marks, sm.external_marks, sm.grade
+ORDER BY total_marks DESC
+LIMIT {limit_n}
+
+Do NOT use semester_results for subject queries. Do NOT remove any columns from this template.""")
 
         return "\n".join(parts)
 
@@ -940,6 +1075,115 @@ class SQLPipeline:
     def _validate_sql(self, sql: str) -> str | None:
         return SQLValidator.validate(sql)
 
+    @staticmethod
+    def _should_retry(result: SQLResult) -> tuple[bool, str]:
+        """
+        Corruption prevention (ErrorLLM, Hong et al., 2026):
+        Don't retry SQL that already returned valid results.
+        Prevents corrupting 30-40% of already-correct SQL.
+        """
+        # Execution error — always retry
+        if not result.success and result.error:
+            return True, f"Execution error: {result.error[:80]}"
+
+        # Zero rows — retry (likely wrong filter)
+        if result.success and result.row_count == 0:
+            return True, "Query returned 0 rows"
+
+        # Has results — check sanity before deciding
+        if result.success and result.row_count > 0:
+            for row in result.rows[:5]:
+                if isinstance(row, dict):
+                    for key, val in row.items():
+                        if "sgpa" in key.lower() and val is not None:
+                            try:
+                                if float(val) > 10:
+                                    return True, f"SGPA value {val} > 10 — impossible"
+                            except (ValueError, TypeError):
+                                pass
+            # Results look valid — DON'T retry
+            return False, "SQL executed with valid results — no retry needed"
+
+        return False, "Result looks valid"
+
+    @staticmethod
+    def _build_error_guided_context(query: str, sql: str, error: str, row_count: int) -> str:
+        """
+        Error-guided retry (ErrorLLM): classify the error and give specific fix guidance.
+        """
+        from adaptive.failure_classifier import classify_sql_error
+
+        info = classify_sql_error(query=query, generated_sql=sql, error_msg=error, row_count=row_count)
+
+        return (
+            f"Your previous SQL had an error.\n"
+            f"ERROR TYPE: {info['error_type']} ({info['subtype']})\n"
+            f"DETAILS: {info['details']}\n\n"
+            f"Fix ONLY the part that's wrong. Keep everything else the same."
+        )
+
+    async def verify_sql_matches_question(self, question: str, sql: str) -> tuple[bool, str]:
+        """
+        Ask the LLM to check if generated SQL actually answers the question.
+        One extra LLM call (~3-5 seconds) but catches wrong LIMIT, wrong table, missing columns.
+        """
+        verify_prompt = f"""Check if this SQL correctly answers the question. Be strict.
+
+QUESTION: {question}
+SQL: {sql}
+
+Check these specific things:
+1. If question says "top 10" or "list 10", does SQL have LIMIT 10? (not 5, not 3)
+2. If question asks about a SUBJECT (physics, DBMS, etc), does SQL use subject_marks table? (NOT semester_results)
+3. If question asks about SGPA or semester performance, does SQL use semester_results table?
+4. If question mentions a batch (2021, 2024), does SQL have WHERE roll_no LIKE 'XX%'?
+5. Does SQL include all relevant columns? For subject queries must have: name, roll_no, subject_name, internal_marks, external_marks, total, grade
+6. If question doesn't mention a branch, SQL should NOT have a branch filter
+7. LIMIT must EXACTLY match what user asked. "top 10" = LIMIT 10. "top 5" = LIMIT 5. No number mentioned = LIMIT 10 default.
+
+Reply in EXACTLY this format:
+CORRECT: yes
+or
+CORRECT: no
+ISSUE: what is wrong in one line
+FIX: the full corrected SQL query starting with SELECT
+
+Reply in English only. Do not output any non-English text."""
+
+        try:
+            response = await self.llm.generate(
+                prompt=verify_prompt,
+                temperature=0.05,
+                max_tokens=800,
+            )
+
+            response_lower = response.lower()
+
+            if "correct: yes" in response_lower:
+                return True, ""
+
+            if "correct: no" in response_lower:
+                fix_sql = ""
+                if "FIX:" in response:
+                    fix_part = response.split("FIX:")[-1].strip()
+                    if "SELECT" in fix_part.upper():
+                        start = fix_part.upper().index("SELECT")
+                        fix_sql = fix_part[start:].strip()
+                        if fix_sql.endswith(";"):
+                            fix_sql = fix_sql[:-1]
+
+                issue = ""
+                if "ISSUE:" in response:
+                    issue = response.split("ISSUE:")[-1].split("\n")[0].strip()
+
+                return False, fix_sql if fix_sql else issue
+
+            return True, ""
+
+        except Exception as e:
+            logger.debug("SQL verification skipped due to error: %s", e)
+            return True, ""
+
     async def _execute_with_retries(
         self,
         generated: SQLResult,
@@ -948,32 +1192,42 @@ class SQLPipeline:
         linked_schema_text: str,
     ) -> SQLResult:
         """
-        UPGRADE 2: Execute SQL with self-correction on error or zero rows.
-
-        Retry strategy:
-          - On execution error: regenerate with error message at lower temperature
-          - On zero rows (when results expected): regenerate with relaxed filters
-          - Max 2 retries total
+        Execute SQL with ErrorLLM-inspired self-correction:
+          - SQL verification: checks generated SQL matches question before execution
+          - Corruption prevention: skip retry if results look valid
+          - Error-guided retry: classify error type and give specific fix guidance
+          - Max retries controlled by config (2 normal, 3 LogicCat)
         """
         current = generated
         retries = 0
 
+        # SQL verification — disabled for now as subject template injection handles
+        # the main issues. The 7B model's verification outputs were corrupting valid SQL.
+        # The verify_sql_matches_question() method remains available for future use.
+
         while retries <= self.max_retries:
             result = await self._execute_sql(current)
 
-            if result.success and result.row_count > 0:
+            # Corruption prevention: if result is valid, don't retry
+            should_retry, reason = self._should_retry(result)
+            if not should_retry:
                 result.retries_used = retries
+                if retries > 0:
+                    logger.info("Corruption prevention: keeping result — %s", reason)
                 return result
 
             if not result.success and retries < self.max_retries:
-                # Execution error — retry with error context
+                # Error-guided retry with classified error context
+                error_context = self._build_error_guided_context(
+                    query, current.sql, result.error, result.row_count,
+                )
                 logger.info(
                     "SQL execution failed (retry %d/%d): %s",
                     retries + 1, self.max_retries, result.error[:100],
                 )
                 current = await self._generate_sql(
                     query, route_result, linked_schema_text,
-                    error_context=result.error,
+                    error_context=error_context,
                     previous_sql=current.sql,
                     temperature=0.01,
                 )

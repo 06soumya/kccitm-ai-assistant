@@ -105,6 +105,19 @@ class QueryCache:
         # Tier 2 — semantic similarity
         return await self._semantic_match(query)
 
+    _FAILURE_PHRASES = (
+        "don't have sufficient",
+        "do not have sufficient",
+        "don't have enough",
+        "no data available",
+        "unable to retrieve",
+        "could not find",
+        "i cannot answer",
+        "insufficient information",
+        "no results found",
+        "i don't have information",
+    )
+
     async def store(
         self,
         query: str,
@@ -117,7 +130,14 @@ class QueryCache:
 
         If the exact same normalized query already exists, the entry is refreshed
         (response + created_at updated) rather than duplicated.
+
+        Skips caching failure/error responses to prevent serving bad answers.
         """
+        # Never cache failure responses
+        response_lower = response.lower()
+        if any(phrase in response_lower for phrase in self._FAILURE_PHRASES):
+            logger.debug("Cache: skipping store — response looks like a failure: %s", response[:80])
+            return
         normalized = self._normalize_query(query)
         query_hash = hashlib.sha256(normalized.encode()).hexdigest()
 

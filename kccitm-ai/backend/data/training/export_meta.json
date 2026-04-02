@@ -1,9 +1,10 @@
 {
-  "exported_at": "2026-03-18T09:26:54.757554",
-  "suggested_run_id": "v20260318_0926",
+  "exported_at": "2026-04-01T11:13:56.319552",
+  "suggested_run_id": "v20260401_1113",
   "min_score": 0.8,
-  "total_entries": 1,
+  "total_entries": 494,
   "categories": {
-    "sql_gen": 1
+    "sql_gen": 487,
+    "response": 7
   }
 }

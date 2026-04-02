@@ -152,6 +152,15 @@ Be specific. Reference actual table and column names. Explain WHY each step is n
         )
 
         logger.info("STaR success candidate: %s", candidate_id)
+
+        # Also add to few-shot retrieval store
+        try:
+            from core.sql_examples_store import get_sql_examples_store
+            store = get_sql_examples_store()
+            await store.add_example(query, sql, reasoning_chain, "star_success")
+        except Exception:
+            pass
+
         return candidate_id
 
     async def batch_rationalize_from_healing(self) -> dict:

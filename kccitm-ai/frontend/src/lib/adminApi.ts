@@ -49,6 +49,8 @@ export const getChunkHealth = () => adminFetch<any>('/api/admin/chunks/health');
 export const getTrainingStats = () => adminFetch<any>('/api/admin/training/stats');
 export const getTrainingCandidates = (category?: string) => adminFetch<any>(`/api/admin/training/candidates${category ? `?category=${category}` : ''}`);
 export const exportTrainingData = () => adminFetch<any>('/api/admin/training/export', { method: 'POST' });
+export const getStarStats = () => adminFetch<any>('/api/admin/dashboard/training/star-stats');
+export const addTrainingPair = (query: string, correct_sql: string) => adminFetch<any>('/api/admin/dashboard/training/rationalize', { method: 'POST', body: JSON.stringify({ query, correct_sql }) });
 
 // Models
 export const getModels = () => adminFetch<any>('/api/admin/models');

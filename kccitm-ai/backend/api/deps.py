@@ -35,6 +35,13 @@ def init_services() -> None:
     _router = QueryRouter(_llm)
     _sql_pipeline = SQLPipeline(_llm)
     _milvus = MilvusSearchClient(uri=settings.milvus_uri)
+
+    # Initialize SQL examples store (non-critical)
+    try:
+        from core.sql_examples_store import get_sql_examples_store
+        get_sql_examples_store(_llm)
+    except Exception:
+        pass
     _rag_pipeline = RAGPipeline(_llm, _milvus)
     _session_manager = SessionManager()
     _cache = QueryCache(_llm)
