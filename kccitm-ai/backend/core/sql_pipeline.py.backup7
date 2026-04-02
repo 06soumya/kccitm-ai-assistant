@@ -466,19 +466,16 @@ Respond with ONLY a JSON object in this exact format:
 
 
 # Retry prompt template for self-correction (UPGRADE 2)
-SQL_RETRY_PROMPT = """Your previous attempt had an error.
+SQL_RETRY_PROMPT = """The previous SQL query failed.
 
-PREVIOUS SQL: {previous_sql}
-PREVIOUS REASONING: {previous_thinking}
-ERROR: {error_message}
+Previous SQL: {previous_sql}
+Error: {error_message}
 
-Identify which step in your reasoning was wrong:
-- If "unknown column" → your column name was wrong, check the schema
-- If "unknown table" → your table choice was wrong
-- If zero rows → your filter values were probably wrong
-- If syntax error → check MySQL syntax rules
-
-Fix ONLY the broken part. Keep everything else the same.
+Fix the SQL to resolve this error. Follow the same schema and rules.
+Common fixes:
+- Unknown column: check the schema above for correct column names
+- Syntax error: check MySQL syntax rules
+- No results: try relaxing WHERE conditions
 
 Respond with ONLY a JSON object:
 {{"thinking": "The error was... I need to fix...", "sql": "SELECT ...", "explanation": "fixed query"}}"""
@@ -780,16 +777,6 @@ class SQLPipeline:
             return generated
         generated.schema_linked = linked
 
-        # Step 1.5: CoT quality validation (logging only — never blocks)
-        try:
-            cot_valid, cot_issue = self._validate_cot_quality(
-                query, generated.explanation, generated.sql
-            )
-            if not cot_valid:
-                logger.info("CoT validation: %s", cot_issue)
-        except Exception:
-            pass
-
         # Step 2: Validate
         validation_error = self._validate_sql(generated.sql)
         if validation_error:
@@ -832,7 +819,6 @@ class SQLPipeline:
         linked_schema_text: str,
         error_context: Optional[str] = None,
         previous_sql: Optional[str] = None,
-        previous_thinking: Optional[str] = None,
         temperature: float = 0.05,
         hint: str = "",
     ) -> SQLResult:
@@ -840,11 +826,9 @@ class SQLPipeline:
         system_prompt = await self._get_system_prompt(linked_schema_text)
 
         if error_context and previous_sql:
-            # Self-correction retry prompt with previous reasoning
+            # Self-correction retry prompt
             user_prompt = SQL_RETRY_PROMPT.format(
-                previous_sql=previous_sql,
-                error_message=error_context,
-                previous_thinking=previous_thinking or "No reasoning captured",
+                previous_sql=previous_sql, error_message=error_context
             )
         else:
             user_prompt = self._build_user_prompt(query, route_result, hint=hint)
@@ -908,100 +892,22 @@ class SQLPipeline:
 
         # Pattern: "compare X and Y" or "X vs Y"
         if any(w in q for w in ["compare", " vs ", "versus", "difference between"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use GROUP BY to compare groups side by side. For batch comparison: "
-                "CASE WHEN roll_no LIKE '21%' THEN '2021' WHEN roll_no LIKE '22%' "
-                "THEN '2022' END as batch. Return both groups in ONE query using "
-                "GROUP BY, not two separate queries."
-            )}]
+            return [{"step": 1, "question": query, "hint": "Use GROUP BY to compare groups side by side. For batch comparison, use roll_no LIKE prefix."}]
 
         # Pattern: "percentage of X who Y"
         if "percentage" in q or "percent" in q or "rate" in q:
-            return [{"step": 1, "question": query, "hint": (
-                "Use ROUND(SUM(CASE WHEN condition THEN 1 ELSE 0 END) * 100.0 / "
-                "COUNT(*), 2) for percentage. Always multiply by 100.0 (not 100) "
-                "for decimal division. For pass rate: result_status IN "
-                "('PASS','PCP','PWG') or LIKE 'CP(% 0)'. For fail: NOT in those."
-            )}]
+            return [{"step": 1, "question": query, "hint": "Use ROUND(SUM(CASE WHEN condition THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) for percentage calculation."}]
 
         # Pattern: "improved/dropped between"
-        if any(w in q for w in ["improved", "dropped", "increased", "decreased", "trend", "change", "growth"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use self-join: SELECT s.name, sr1.sgpa as sem1_sgpa, sr2.sgpa as "
-                "sem2_sgpa, ROUND(sr2.sgpa - sr1.sgpa, 2) as change FROM students s "
-                "JOIN semester_results sr1 ON s.roll_no = sr1.roll_no AND sr1.semester = X "
-                "JOIN semester_results sr2 ON s.roll_no = sr2.roll_no AND sr2.semester = Y. "
-                "For 'improved': WHERE sr2.sgpa > sr1.sgpa."
-            )}]
-
-        # Pattern: "which X has highest/lowest Y"
-        if any(w in q for w in ["which batch", "which branch", "which semester", "which subject"]) and \
-           any(w in q for w in ["highest", "lowest", "best", "worst", "most", "least", "maximum", "minimum"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use GROUP BY + ORDER BY + LIMIT 1. For 'lowest/worst/least' use ASC. "
-                "Pattern: SELECT group_col, AGG(val) as metric FROM tables GROUP BY "
-                "group_col ORDER BY metric DESC LIMIT 1."
-            )}]
-
-        # Pattern: "students who [condition across multiple rows]"
-        if ("students who" in q or "students that" in q) and \
-           any(w in q for w in ["all semester", "every semester", "never failed", "always passed"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use GROUP BY + HAVING. Pattern: SELECT s.name, s.roll_no FROM "
-                "students s JOIN semester_results sr ON s.roll_no = sr.roll_no "
-                "GROUP BY s.roll_no, s.name HAVING SUM(CASE WHEN sr.result_status "
-                "NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE "
-                "'CP(% 0)' THEN 1 ELSE 0 END) = 0."
-            )}]
+        if any(w in q for w in ["improved", "dropped", "increased", "decreased", "trend", "change"]):
+            return [{"step": 1, "question": query, "hint": "Use self-join on semester_results: sr1 JOIN semester_results sr2 ON sr1.roll_no = sr2.roll_no AND sr2.semester = sr1.semester + 1, then compare sr2.sgpa > sr1.sgpa."}]
 
         # Pattern: "subjects where X% got grade Y"
         if "subjects" in q and ("grade" in q or "%" in q or "percent" in q):
-            return [{"step": 1, "question": query, "hint": (
-                "GROUP BY sm.subject_code, sm.subject_name with HAVING clause "
-                "on the percentage. Use SUM(CASE WHEN sm.grade = 'F' THEN 1 "
-                "ELSE 0 END) * 100.0 / COUNT(*)."
-            )}]
+            return [{"step": 1, "question": query, "hint": "GROUP BY sm.subject_code, sm.subject_name with HAVING clause on the percentage. Use SUM(CASE WHEN sm.grade = 'F' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)."}]
 
         # Simple query — no decomposition needed
         return [{"step": 1, "question": query}]
-
-    def _validate_cot_quality(self, question: str, thinking: str, sql: str) -> tuple[bool, str]:
-        """
-        Check if chain-of-thought reasoning is consistent with the SQL.
-        Returns (is_valid, issue_description). Logging only — never blocks.
-        """
-        issues = []
-        thinking_lower = (thinking or "").lower()
-        sql_lower = (sql or "").lower()
-        sql_upper = (sql or "").upper()
-
-        # Check 1: Table mention consistency
-        if "subject_marks" in sql_lower and "subject" not in thinking_lower:
-            issues.append("SQL uses subject_marks but reasoning doesn't mention it")
-        if "semester_results" in sql_lower and "semester" not in thinking_lower and "sgpa" not in thinking_lower:
-            issues.append("SQL uses semester_results but reasoning doesn't mention it")
-
-        # Check 2: Filter consistency
-        if "LIKE '2" in sql and "batch" not in thinking_lower and "roll" not in thinking_lower:
-            issues.append("SQL has batch filter but reasoning doesn't mention batch")
-
-        # Check 3: LIMIT consistency with question
-        limit_match = re.search(r"LIMIT\s+(\d+)", sql_upper)
-        if limit_match:
-            sql_limit = int(limit_match.group(1))
-            q_numbers = re.findall(r"\b(\d+)\b", question)
-            for n in q_numbers:
-                n_int = int(n)
-                if 1 < n_int <= 100 and n_int != sql_limit:
-                    issues.append(f"User asked for {n} but SQL has LIMIT {sql_limit}")
-
-        # Check 4: Reasoning exists
-        if not thinking or len(thinking) < 20:
-            issues.append("Reasoning is missing or too short")
-
-        if issues:
-            return False, "; ".join(issues)
-        return True, ""
 
     async def _get_system_prompt(self, linked_schema_text: str) -> str:
         """
@@ -1330,13 +1236,10 @@ Reply in English only. Do not output any non-English text."""
                     "SQL execution failed (retry %d/%d): %s",
                     retries + 1, self.max_retries, result.error[:100],
                 )
-                # Pass previous thinking so the retry prompt can show where reasoning went wrong
-                prev_thinking = current.explanation or ""
                 current = await self._generate_sql(
                     query, route_result, linked_schema_text,
                     error_context=error_context,
                     previous_sql=current.sql,
-                    previous_thinking=prev_thinking,
                     temperature=0.01,
                 )
                 if not current.success:
