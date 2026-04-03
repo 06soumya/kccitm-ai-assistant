@@ -41,8 +41,6 @@ from core.rag_pipeline import RAGPipeline, RAGResult, RESPONSE_GENERATOR_PROMPT
 from core.router import QueryRouter, RouteResult
 from core.session_manager import SessionManager
 from core.sql_pipeline import SQLPipeline, SQLResult
-from core.query_normalizer import normalize_query
-from core.query_understander import QueryUnderstander
 from db.milvus_client import MilvusSearchClient
 
 logger = logging.getLogger(__name__)
@@ -127,7 +125,6 @@ class Orchestrator:
         self.context_builder = ContextBuilder()
         self.session_manager = session_manager or SessionManager()
         self.cache = cache or QueryCache(llm)
-        self.understander = QueryUnderstander(llm)
 
     # ── Public interface ──────────────────────────────────────────────────────
 
@@ -172,10 +169,6 @@ class Orchestrator:
                         total_time_ms=(time.time() - t0) * 1000,
                     )
 
-            # Step 0.5: Normalize query (typos, Hinglish, abbreviations)
-            query = normalize_query(query)
-            q_lower = query.lower().strip()  # refresh after normalization
-
             # Step 1: Load session history (if session_id provided and no explicit history)
             if session_id and chat_history is None:
                 raw_history = await self.session_manager.get_chat_history(session_id)
@@ -185,8 +178,10 @@ class Orchestrator:
 
             # Step 2: Check cache (skip for AKTU notifications, meta-questions, and admin commands)
             from core.aktu_notifications import aktu_service as _aktu_svc
+            _is_admin = q_lower in ("clear cache", "clear the cache", "reset cache", "flush cache")
             _skip_cache = (
-                _aktu_svc.is_notification_query(query)
+                _is_admin
+                or _aktu_svc.is_notification_query(query)
                 or self._is_meta_question(query, chat_history)
             )
             cache_hit = None if _skip_cache else await self.cache.check(query)
@@ -313,30 +308,22 @@ class Orchestrator:
             except Exception as exc:
                 logger.debug("Meta-question handling failed (non-critical): %s", exc)
 
-            # Step 2.8: Query understanding — single LLM call to understand the
-            # full query + history, replaces _expand_followup + _detect_student_lookup
+            # Step 2.8a: Expand follow-ups BEFORE student lookup
+            # (prevents "what about batch 2022?" from being treated as a name)
             try:
-                understood = await self.understander.understand(query, chat_history)
-            except Exception as exc:
-                logger.warning("Query understander failed: %s", exc)
-                understood = {"intent": "analytical", "expanded_query": query,
-                              "student_name": None, "roll_no": None,
-                              "is_followup": False, "active_student_followup": False}
+                expanded_query = await self._expand_followup(query, chat_history)
+            except Exception:
+                expanded_query = query
 
-            expanded_query = understood["expanded_query"]
-            intent = understood["intent"]
-
-            # Step 2.9: Student lookup (driven by understander)
-            if intent == "student_lookup":
+            # Step 2.8: Student lookup (bypasses router for direct student queries)
+            # Use expanded_query so follow-ups like "what about X" are resolved first
+            student_lookup = self._detect_student_lookup(expanded_query, chat_history)
+            if student_lookup:
                 try:
-                    # Determine identifier: roll_no > selection > student_name > fallback
-                    identifier = None
-
-                    if understood.get("roll_no"):
-                        identifier = understood["roll_no"]
-
-                    elif understood.get("selection"):
-                        sel = understood["selection"]
+                    identifier = student_lookup["identifier"]
+                    # Handle selection from previous options list
+                    if student_lookup["type"] == "selection":
+                        sel = int(identifier)
                         for msg in reversed(chat_history or []):
                             if msg.get("role") == "assistant" and "Reply with the number" in msg.get("content", ""):
                                 roll_nums = re.findall(
@@ -346,45 +333,32 @@ class Orchestrator:
                                 if sel <= len(roll_nums):
                                     identifier = roll_nums[sel - 1]
                                 break
-                        if not identifier:
-                            identifier = str(sel)
 
-                    elif understood.get("student_name"):
-                        identifier = understood["student_name"]
+                    result = await self.sql_pipeline.search_student(identifier)
 
-                    elif understood.get("active_student_followup"):
-                        # Use the active student from session metadata
-                        current = self._get_current_student_from_history(chat_history)
-                        if current:
-                            identifier = current["roll_no"]
+                    if result["found"] == 0:
+                        resp_text = f"No student found matching '{identifier}'. Try a different name, roll number, or batch year."
+                    elif result["found"] > 1:
+                        resp_text = self._format_student_options(result["students"])
+                    else:
+                        resp_text = self._format_student_full_result(result["detail"])
 
-                    if identifier:
-                        result = await self.sql_pipeline.search_student(identifier)
-
-                        if result["found"] == 0:
-                            resp_text = f"No student found matching '{identifier}'. Try a different name, roll number, or batch year."
-                        elif result["found"] > 1:
-                            resp_text = self._format_student_options(result["students"])
-                        else:
-                            resp_text = self._format_student_full_result(result["detail"])
-
-                        sl_response = QueryResponse(
-                            success=True,
-                            response=resp_text,
-                            route_used="STUDENT_LOOKUP",
-                            total_time_ms=(time.time() - t0) * 1000,
-                            metadata={
-                                "student_lookup": True,
-                                "current_student_roll": result["detail"]["student"]["roll_no"] if result.get("detail") else None,
-                                "current_student_name": result["detail"]["student"]["name"] if result.get("detail") else None,
-                            },
+                    sl_response = QueryResponse(
+                        success=True,
+                        response=resp_text,
+                        route_used="STUDENT_LOOKUP",
+                        total_time_ms=(time.time() - t0) * 1000,
+                        metadata={
+                            "student_lookup": True,
+                            "current_student_roll": result["detail"]["student"]["roll_no"] if result.get("detail") else None,
+                            "current_student_name": result["detail"]["student"]["name"] if result.get("detail") else None,
+                        },
+                    )
+                    if session_id:
+                        await self._save_to_session(
+                            session_id, query, resp_text, sl_response.metadata,
                         )
-                        if session_id:
-                            await self._save_to_session(
-                                session_id, query, resp_text, sl_response.metadata,
-                            )
-                        return sl_response
-
+                    return sl_response
                 except Exception as exc:
                     logger.warning("Student lookup failed, falling through to router: %s", exc)
 
@@ -478,9 +452,6 @@ class Orchestrator:
         Routing + retrieval happen first (non-streaming, fast).
         Only the final LLM generation is streamed — tokens yield as generated.
         """
-        # Normalize query (typos, Hinglish, abbreviations)
-        query = normalize_query(query)
-
         # Load session history
         if session_id and chat_history is None:
             raw_history = await self.session_manager.get_chat_history(session_id)
@@ -499,57 +470,35 @@ class Orchestrator:
                 )
             return
 
-        # Query understanding (single LLM call)
-        try:
-            understood = await self.understander.understand(query, chat_history)
-        except Exception:
-            understood = {"intent": "analytical", "expanded_query": query,
-                          "student_name": None, "roll_no": None,
-                          "is_followup": False, "active_student_followup": False}
-
-        expanded_query = understood["expanded_query"]
-
         # Student lookup (non-streaming, returns full text)
-        if understood["intent"] == "student_lookup":
+        student_lookup = self._detect_student_lookup(query, chat_history)
+        if student_lookup:
             try:
-                identifier = (
-                    understood.get("roll_no")
-                    or understood.get("student_name")
-                )
-                if understood.get("selection"):
-                    sel = understood["selection"]
+                identifier = student_lookup["identifier"]
+                if student_lookup["type"] == "selection":
+                    sel = int(identifier)
                     for msg in reversed(chat_history or []):
                         if msg.get("role") == "assistant" and "Reply with the number" in msg.get("content", ""):
                             roll_nums = re.findall(r"\|\s*\d+\s*\|[^|]+\|\s*(\d{13})\s*\|", msg["content"])
                             if sel <= len(roll_nums):
                                 identifier = roll_nums[sel - 1]
                             break
-                elif understood.get("active_student_followup"):
-                    current = self._get_current_student_from_history(chat_history)
-                    if current:
-                        identifier = current["roll_no"]
-
-                if identifier:
-                    result = await self.sql_pipeline.search_student(identifier)
-                    if result["found"] == 0:
-                        resp_text = f"No student found matching '{identifier}'."
-                    elif result["found"] > 1:
-                        resp_text = self._format_student_options(result["students"])
-                    else:
-                        resp_text = self._format_student_full_result(result["detail"])
-                    yield resp_text
-                    if session_id:
-                        await self._save_to_session(session_id, query, resp_text, {
-                            "route_used": "STUDENT_LOOKUP",
-                            "current_student_roll": result["detail"]["student"]["roll_no"] if result.get("detail") else None,
-                            "current_student_name": result["detail"]["student"]["name"] if result.get("detail") else None,
-                        })
-                    return
+                result = await self.sql_pipeline.search_student(identifier)
+                if result["found"] == 0:
+                    resp_text = f"No student found matching '{identifier}'."
+                elif result["found"] > 1:
+                    resp_text = self._format_student_options(result["students"])
+                else:
+                    resp_text = self._format_student_full_result(result["detail"])
+                yield resp_text
+                if session_id:
+                    await self._save_to_session(session_id, query, resp_text, {"route_used": "STUDENT_LOOKUP"})
+                return
             except Exception as exc:
                 logger.warning("Student lookup stream failed: %s", exc)
 
         # Route (non-streaming, fast)
-        route_result = await self.router.route(expanded_query, chat_history)
+        route_result = await self.router.route(query, chat_history)
 
         # Retrieve / execute (non-streaming)
         context, context_type = await self._build_stream_context(query, route_result)
@@ -596,75 +545,50 @@ class Orchestrator:
         chat_history: list[dict] | None,
     ) -> QueryResponse:
         """
-        SQL route: run SQL pipeline → sanity check → OpenAI fallback → summarize.
-        Falls back to RAG if all SQL paths fail.
+        SQL route: run SQL pipeline → summarize results in natural language.
+        Falls back to RAG if SQL fails or returns 0 rows.
         """
         sql_result = await self.sql_pipeline.run(query, route_result)
 
-        # Path A: Local SQL failed entirely → try OpenAI SQL → RAG fallback
         if not sql_result.success:
-            logger.info("SQL failed (%s) — trying OpenAI SQL", sql_result.error)
-            openai_result = await self._try_openai_sql(query)
-            if openai_result:
-                sql_result = openai_result
-                sql_result.explanation = "(corrected by OpenAI)"
-            else:
-                rag_result = await self.rag_pipeline.run(query, route_result, chat_history)
-                return QueryResponse(
-                    success=rag_result.success,
-                    response=rag_result.response,
-                    route_used="RAG (SQL fallback)",
-                    sql_result=sql_result,
-                    rag_result=rag_result,
-                    error=rag_result.error if not rag_result.success else "",
-                    metadata={"fallback": True, "sql_error": sql_result.error},
-                )
+            logger.info("SQL failed (%s) — falling back to RAG", sql_result.error)
+            rag_result = await self.rag_pipeline.run(query, route_result, chat_history)
+            return QueryResponse(
+                success=rag_result.success,
+                response=rag_result.response,
+                route_used="RAG (SQL fallback)",
+                sql_result=sql_result,
+                rag_result=rag_result,
+                error=rag_result.error if not rag_result.success else "",
+                metadata={"fallback": True, "sql_error": sql_result.error},
+            )
 
-        # Path B: Local SQL returned 0 rows → try OpenAI SQL → RAG fallback
         if sql_result.row_count == 0:
-            logger.info("SQL returned 0 rows — trying OpenAI SQL")
-            openai_result = await self._try_openai_sql(query)
-            if openai_result and openai_result.row_count > 0:
-                sql_result = openai_result
-                sql_result.explanation = "(corrected by OpenAI — local returned 0 rows)"
-            else:
-                rag_result = await self.rag_pipeline.run(query, route_result, chat_history)
-                if rag_result.success and rag_result.chunk_count > 0:
-                    return QueryResponse(
-                        success=True,
-                        response=rag_result.response,
-                        route_used="RAG (SQL empty)",
-                        sql_result=sql_result,
-                        rag_result=rag_result,
-                        metadata={"fallback": True, "reason": "SQL returned 0 rows"},
-                    )
+            logger.info("SQL returned 0 rows — attempting RAG for context")
+            rag_result = await self.rag_pipeline.run(query, route_result, chat_history)
+            if rag_result.success and rag_result.chunk_count > 0:
                 return QueryResponse(
                     success=True,
-                    response=(
-                        "I couldn't find any matching data for your query. "
-                        "The SQL query executed successfully but returned no results. "
-                        "Could you try rephrasing or broadening your search?"
-                    ),
-                    route_used="SQL",
+                    response=rag_result.response,
+                    route_used="RAG (SQL empty)",
                     sql_result=sql_result,
-                    metadata={"empty_result": True},
+                    rag_result=rag_result,
+                    metadata={"fallback": True, "reason": "SQL returned 0 rows"},
                 )
+            return QueryResponse(
+                success=True,
+                response=(
+                    "I couldn't find any matching data for your query. "
+                    "The SQL query executed successfully but returned no results. "
+                    "Could you try rephrasing or broadening your search?"
+                ),
+                route_used="SQL",
+                sql_result=sql_result,
+                metadata={"empty_result": True},
+            )
 
-        # Path C: Local SQL succeeded with results → sanity check
-        try:
-            from core.openai_sql import sanity_check
-            is_valid, reason = sanity_check(query, sql_result.sql, sql_result.rows)
-            if not is_valid:
-                logger.info("Sanity check failed (%s) — trying OpenAI SQL", reason)
-                openai_result = await self._try_openai_sql(query)
-                if openai_result and openai_result.row_count > 0:
-                    sql_result = openai_result
-                    sql_result.explanation = f"(corrected by OpenAI — {reason})"
-                # If OpenAI also fails, keep original result (better than nothing)
-        except Exception as exc:
-            logger.debug("Sanity check skipped: %s", exc)
-
-        # Format response
+        # For large result sets (>20 rows), return the table directly
+        # instead of asking the 7B LLM to reproduce all rows
         if sql_result.row_count > 20 and sql_result.formatted_table:
             response_text = (
                 f"Found {sql_result.row_count} results.\n\n"
@@ -674,66 +598,12 @@ class Orchestrator:
             sql_context = self.context_builder.build_sql_context(sql_result)
             response_text = await self._generate_sql_summary(query, sql_context, chat_history)
 
-        # Extract chart data if results are visualizable
-        chart_data = self._extract_chart_data(query, sql_result)
-        metadata = {}
-        if chart_data:
-            metadata["chart_data"] = chart_data
-
         return QueryResponse(
             success=True,
             response=response_text,
             route_used="SQL",
             sql_result=sql_result,
-            metadata=metadata,
         )
-
-    async def _try_openai_sql(self, query: str):
-        """
-        Try generating SQL via OpenAI and executing it locally.
-        Returns an SQLResult on success, None on failure. Never raises.
-        """
-        if not settings.OPENAI_ENABLED:
-            return None
-        try:
-            from core.openai_sql import generate_sql_via_openai
-            from core.sql_pipeline import SQLResult, SQLValidator
-            from db.mysql_client import execute_query
-
-            openai_sql = await generate_sql_via_openai(query)
-            if not openai_sql:
-                return None
-
-            # Validate before executing
-            validation_error = SQLValidator.validate(openai_sql)
-            if validation_error:
-                logger.warning("OpenAI SQL validation failed: %s", validation_error)
-                return None
-
-            # Execute — escape % for aiomysql (it uses %s param style)
-            safe_sql = openai_sql.replace("%", "%%")
-            logger.info("Executing OpenAI SQL: %s", openai_sql[:200])
-            rows = await execute_query(safe_sql)
-            logger.info("OpenAI SQL execution: %s rows", len(rows) if rows is not None else "None")
-            if rows is not None:
-                result = SQLResult(
-                    success=True,
-                    sql=openai_sql,
-                    rows=rows,
-                    row_count=len(rows),
-                )
-                # Format table
-                result.formatted_table = self.sql_pipeline._format_as_markdown_table(rows)
-                result.formatted_text = self.sql_pipeline._format_as_text(
-                    rows, openai_sql, "", []
-                )
-                logger.info("OpenAI SQL succeeded: %d rows", len(rows))
-                return result
-
-        except Exception as exc:
-            logger.warning("OpenAI SQL fallback failed: %s", exc)
-
-        return None
 
     async def _handle_rag(
         self,
@@ -830,79 +700,6 @@ class Orchestrator:
         "constitution", "mathematics", "physics", "chemistry",
     }
 
-    @staticmethod
-    def _get_current_student_from_history(chat_history: list[dict] | None) -> dict | None:
-        """
-        Extract the most recently active student (roll_no + name) from chat history metadata.
-
-        Walks backwards through assistant messages looking for metadata with
-        current_student_roll. Returns {"roll_no": ..., "name": ...} or None.
-        """
-        if not chat_history:
-            return None
-
-        for msg in reversed(chat_history):
-            if msg.get("role") != "assistant":
-                continue
-            meta = msg.get("metadata", {})
-            if isinstance(meta, str):
-                try:
-                    meta = json.loads(meta)
-                except Exception:
-                    meta = {}
-            if meta.get("current_student_roll"):
-                return {
-                    "roll_no": meta["current_student_roll"],
-                    "name": meta.get("current_student_name", ""),
-                }
-        return None
-
-    def _is_new_search(self, query: str) -> bool:
-        """
-        Check if the query is clearly starting a NEW student/topic search
-        or a new analytical topic, rather than following up on the current student.
-
-        Returns True if the query:
-          - Contains a new name or roll number
-          - Is an explicit new-search trigger
-          - Is an analytical/aggregate query about multiple students
-          - References a different topic (batch comparison, etc.)
-        """
-        q = query.strip()
-        q_lower = q.lower()
-
-        # New roll number → new search
-        if re.search(r'\b\d{13}\b', q):
-            return True
-
-        # Explicit "search for X", "find X", "look up X" → new search
-        if re.match(r'^(?:search|find|look\s*up|switch to)\s+', q_lower):
-            return True
-
-        # Analytical signals → not a student follow-up, it's a new topic
-        if any(signal in q_lower for signal in self._ANALYTICAL_SIGNALS):
-            return True
-
-        # Bare name (2-3 words that look like a person's name) → new search
-        # After normalization query is lowercase, so check alpha words
-        words = q.split()
-        if 2 <= len(words) <= 3 and all(w.isalpha() for w in words):
-            # But only if it doesn't look like a command ("full result", "show details")
-            command_words = {
-                "full", "show", "complete", "all", "whole", "total",
-                "give", "tell", "get", "display", "result", "results",
-                "marks", "details", "profile", "performance", "semester",
-            }
-            if not any(w.lower() in command_words for w in words):
-                return True
-
-        # "tell me about X" / "about student X" → new search
-        for trigger in ("tell me about", "about student", "who is", "search for"):
-            if q_lower.startswith(trigger):
-                return True
-
-        return False
-
     def _detect_student_lookup(
         self, query: str, chat_history: list[dict] | None = None,
     ) -> dict | None:
@@ -921,17 +718,6 @@ class Orchestrator:
             for msg in reversed(chat_history or []):
                 if msg.get("role") == "assistant" and "Reply with the number" in msg.get("content", ""):
                     return {"type": "selection", "identifier": q}
-
-        # ── Step 1.5: Student follow-up — stick to the active student ──
-        # If a student was recently looked up and this query isn't analytical
-        # or a new search, assume it's about the same student.
-        current = self._get_current_student_from_history(chat_history)
-        if current and not self._is_new_search(query):
-            logger.info(
-                "Student follow-up detected: '%s' → using active student %s (%s)",
-                q[:50], current["roll_no"], current["name"],
-            )
-            return {"type": "roll_no", "identifier": current["roll_no"]}
 
         # ── Step 2: Roll number (13 digits anywhere in query) ──
         roll_match = re.search(r"\b(\d{13})\b", q)
@@ -970,21 +756,11 @@ class Orchestrator:
         if name:
             return {"type": "name", "identifier": name}
 
-        # ── Step 5: Bare name (2-3 alpha words, nothing else) ──
-        # After normalization, query is lowercase, so check alpha-only words.
-        # Exclude common command/query words to avoid false positives.
+        # ── Step 5: Bare name (2-3 capitalized words, nothing else) ──
+        # Only if the query is short and looks like just a name
         words = q.split()
-        if 2 <= len(words) <= 3 and all(w.isalpha() for w in words):
-            non_name_words = {
-                "full", "show", "complete", "all", "whole", "total",
-                "give", "tell", "get", "display", "result", "results",
-                "marks", "details", "profile", "performance", "semester",
-                "top", "best", "worst", "how", "many", "what", "the",
-                "pass", "rate", "fail", "back", "paper", "batch",
-                "average", "compare", "list", "find", "search",
-            }
-            if not any(w.lower() in non_name_words for w in words):
-                return {"type": "name", "identifier": q}
+        if 2 <= len(words) <= 3 and all(w[0].isupper() and w.isalpha() for w in words):
+            return {"type": "name", "identifier": q}
 
         # ── Step 6: Batch year (only if nothing else matched) ──
         batch_match = re.search(r"\bbatch\s*(\d{4})\b", q, re.IGNORECASE)
@@ -1002,19 +778,12 @@ class Orchestrator:
         remainder = re.sub(r"'s\b", "", remainder).strip()
         # Strip "from batch YYYY"
         remainder = re.sub(r"\s*(?:from\s+)?batch\s*\d{4}\s*$", "", remainder, flags=re.IGNORECASE).strip()
-        # Strip trailing noise: modifiers + result words + Hindi words
-        # Must strip "full result", "complete results", etc. in one pass
+        # Strip trailing noise: result, results, semester, Hindi words (ka, ki, ke, ko)
         remainder = re.sub(
-            r"\s+(?:(?:full|whole|complete|all|detailed)\s+)?"
-            r"(?:result|results|marks|semester|details|profile|info|performance"
+            r"\s+(?:result|results|marks|semester|details|profile|info|performance"
             r"|ka\s+result|ki\s+result|ke\s+result|ko"
             r"|ka|ki|ke"
             r"|in\s+semester\s+\d+)\s*$",
-            "", remainder, flags=re.IGNORECASE,
-        ).strip()
-        # Also strip standalone trailing modifiers (if "result" was already removed)
-        remainder = re.sub(
-            r"\s+(?:full|whole|complete|all|detailed)$",
             "", remainder, flags=re.IGNORECASE,
         ).strip()
         if remainder and len(remainder) >= 3 and not remainder[0].isdigit():
@@ -1034,19 +803,14 @@ class Orchestrator:
             r"^(?:show\s+me\s+(?:the\s+)?(?:result|marks|details)\s+(?:for|of)\s+)?"
             r"([A-Za-z]+(?: [A-Za-z]+){1,3})"
             r"(?:\s*'s)?"
-            r"\s+(?:full\s+|whole\s+|complete\s+|all\s+)?"
-            r"(?:result|results|marks|batch|semester|from|details|performance|profile"
+            r"\s+(?:result|results|marks|batch|semester|from|details|performance|profile"
             r"|ka\s+result|ki\s+result|ke\s+result|ka|ki|ke)",
             q, re.IGNORECASE,
         )
         if match:
             name = match.group(1).strip()
-            # Strip trailing noise: Hindi connectors + English modifiers that
-            # the greedy regex might have captured as part of the name
-            name = re.sub(
-                r"\s+(?:ka|ki|ke|ko|full|whole|complete|all|the)$",
-                "", name, flags=re.IGNORECASE,
-            ).strip()
+            # Strip trailing Hindi noise words from captured name
+            name = re.sub(r"\s+(?:ka|ki|ke|ko)$", "", name, flags=re.IGNORECASE).strip()
             # Make sure it's not a common phrase
             common_starts = {
                 "how many", "what is", "which are", "show all", "list all",
@@ -1146,117 +910,6 @@ class Orchestrator:
             logger.debug("AKTU knowledge check failed: %s", exc)
 
         return None
-
-    # ── Chart data extraction ────────────────────────────────────────────────
-
-    _CHART_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2"]
-
-    @staticmethod
-    def _extract_chart_data(query: str, sql_result) -> dict | None:
-        """
-        Detect if SQL results are suitable for visualization and return
-        chart metadata for the frontend.
-
-        Returns a chart_data dict or None if not chartable.
-
-        Rules:
-          - Need >= 2 rows (nothing to compare with 1 row)
-          - Need at least 1 label column (str) and 1 numeric column
-          - Auto-detect chart type: line for sequential data (semester, year),
-            bar for categorical data (branch, subject, gender)
-        """
-        if not sql_result or not sql_result.rows or len(sql_result.rows) < 2:
-            return None
-
-        rows = sql_result.rows
-        if len(rows) > 50:
-            return None  # too many rows for a readable chart
-
-        # Identify column types from first row
-        sample = rows[0]
-        label_cols = []
-        numeric_cols = []
-
-        for col, val in sample.items():
-            if isinstance(val, (int, float)):
-                numeric_cols.append(col)
-            elif isinstance(val, str) and not val.isdigit():
-                label_cols.append(col)
-            # Decimal from MySQL comes as Decimal type
-            else:
-                try:
-                    float(val)
-                    numeric_cols.append(col)
-                except (ValueError, TypeError):
-                    if val is not None:
-                        label_cols.append(col)
-
-        if not numeric_cols or not label_cols:
-            return None
-
-        # Pick the best label column (x-axis)
-        # Prefer: semester > batch > name > branch > subject > first string col
-        x_priority = ["semester", "sem", "batch", "name", "branch", "subject_name", "gender"]
-        x_key = label_cols[0]
-        for preferred in x_priority:
-            for col in label_cols:
-                if preferred in col.lower():
-                    x_key = col
-                    break
-            else:
-                continue
-            break
-
-        # Determine chart type
-        sequential_keys = {"semester", "sem", "batch", "year", "session"}
-        chart_type = "line" if any(s in x_key.lower() for s in sequential_keys) else "bar"
-
-        # Build y-axis keys (all numeric columns)
-        colors = Orchestrator._CHART_COLORS
-        y_keys = []
-        for i, col in enumerate(numeric_cols):
-            # Human-readable label: "sgpa" → "SGPA", "total_marks" → "Total Marks"
-            label = col.replace("_", " ").title()
-            if col.lower() in ("sgpa", "cgpa", "gpa"):
-                label = col.upper()
-            y_keys.append({
-                "key": col,
-                "label": label,
-                "color": colors[i % len(colors)],
-            })
-
-        # Build clean data (ensure numeric values are floats for recharts)
-        clean_data = []
-        for row in rows:
-            point = {x_key: str(row.get(x_key, ""))}
-            for yk in y_keys:
-                val = row.get(yk["key"])
-                try:
-                    point[yk["key"]] = round(float(val), 2) if val is not None else 0
-                except (ValueError, TypeError):
-                    point[yk["key"]] = 0
-            clean_data.append(point)
-
-        # Generate title
-        q_lower = query.lower()
-        if "trend" in q_lower or "progress" in q_lower:
-            title = "Trend Analysis"
-        elif "compare" in q_lower or "vs" in q_lower:
-            title = "Comparison"
-        elif "top" in q_lower or "rank" in q_lower:
-            title = "Rankings"
-        elif "rate" in q_lower or "percent" in q_lower:
-            title = "Rate Analysis"
-        else:
-            title = f"{y_keys[0]['label']} by {x_key.replace('_', ' ').title()}"
-
-        return {
-            "type": chart_type,
-            "title": title,
-            "xKey": x_key,
-            "yKeys": y_keys,
-            "data": clean_data,
-        }
 
     def _format_student_full_result(self, detail: dict) -> str:
         """Format complete student results in structured markdown tables."""
@@ -1358,21 +1011,9 @@ class Orchestrator:
 
         q_lower = query.lower().strip()
 
-        # SKIP expansion if query looks like a standalone student lookup.
-        # Patterns: "[Name] result", "full result of [Name]", "show me [Name]'s marks"
-        # These should go directly to _detect_student_lookup, not be rewritten.
-        _student_query_patterns = [
-            r"(?:full|complete|whole|all)?\s*(?:result|marks|details)\s+(?:of|for)\s+[a-z]",
-            r"[a-z]+\s+[a-z]+(?:'s)?\s+(?:full\s+)?(?:result|marks|details)",
-            r"(?:show|tell|give)\s+(?:me\s+)?[a-z]+\s+[a-z]+(?:'s)?\s+(?:full\s+)?(?:result|marks)",
-        ]
-        for pat in _student_query_patterns:
-            if re.search(pat, q_lower):
-                return query
-
         # Starts-with indicators (query begins with these)
         start_indicators = [
-            "what about", "how about", "and for", "same for",
+            "what about", "how about", "and for", "show me", "same for",
             "and the", "now for", "what if", "try", "do the same",
             "bottom", "instead", "also", "same but", "show their",
             "show his", "show her", "now show", "can you show",

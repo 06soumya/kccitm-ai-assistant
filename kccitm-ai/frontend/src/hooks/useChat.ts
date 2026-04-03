@@ -86,6 +86,7 @@ export function useChat({
               metadata:   {
                 total_time_ms: event.total_time_ms,
                 route_used:    routeUsed || undefined,
+                ...(event.chart_data ? { chart_data: event.chart_data } : {}),
               },
               created_at: new Date().toISOString(),
             };
@@ -114,6 +115,7 @@ export function useChat({
           metadata:   {
             route_used:    res.route_used,
             total_time_ms: res.total_time_ms,
+            ...res.metadata,
           },
           created_at: new Date().toISOString(),
         };

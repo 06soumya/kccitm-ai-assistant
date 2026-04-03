@@ -49,6 +49,7 @@ export interface SSEEvent {
   route_used?: string;
   total_time_ms?: number;
   session_id?: string;
+  chart_data?: Record<string, unknown>;
 }
 
 export interface FeedbackRequest {

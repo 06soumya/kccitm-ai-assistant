@@ -336,11 +336,14 @@ class QueryCache:
         cached_sems.update(re.findall(r"\bsem\s*(\d+)", cached_lower))
         if new_sems and cached_sems and new_sems != cached_sems:
             return False
+        # One has a specific semester, the other doesn't — reject
+        if new_sems != cached_sems:
+            return False
 
-        # Extract batch years
+        # Extract batch years — reject if one has batch and the other doesn't
         new_batches = set(re.findall(r"batch\s*(\d{4})", new_lower))
         cached_batches = set(re.findall(r"batch\s*(\d{4})", cached_lower))
-        if new_batches and cached_batches and new_batches != cached_batches:
+        if new_batches != cached_batches:
             return False
 
         # Extract standalone numbers that look like semesters (1-8) after "in" or "for"
@@ -360,6 +363,35 @@ class QueryCache:
         new_branches = {b for b in branches if b in new_lower}
         cached_branches = {b for b in branches if b in cached_lower}
         if new_branches and cached_branches and new_branches != cached_branches:
+            return False
+
+        # Extract gender — reject if mismatch or one has it and other doesn't
+        genders = ["male", "female"]
+        new_gender = {g for g in genders if g in new_lower}
+        cached_gender = {g for g in genders if g in cached_lower}
+        if new_gender != cached_gender:
+            return False
+
+        # Intent mismatch: "how many" (count) vs "list" (enumerate) are different
+        count_words = ["how many", "count", "total number", "number of"]
+        list_words = ["list", "list all", "show all", "all the students"]
+        new_is_count = any(w in new_lower for w in count_words)
+        cached_is_count = any(w in cached_lower for w in count_words)
+        new_is_list = any(w in new_lower for w in list_words)
+        cached_is_list = any(w in cached_lower for w in list_words)
+        if (new_is_count and cached_is_list) or (new_is_list and cached_is_count):
+            return False
+
+        # Subject name mismatch — reject if different subjects mentioned
+        subjects = [
+            "dbms", "dsa", "physics", "chemistry", "math", "automata",
+            "compiler", "network", "algorithm", "operating system",
+            "software engineering", "machine learning", "artificial intelligence",
+            "data structure", "web", "cloud", "cyber",
+        ]
+        new_subj = {s for s in subjects if s in new_lower}
+        cached_subj = {s for s in subjects if s in cached_lower}
+        if new_subj and cached_subj and new_subj != cached_subj:
             return False
 
         return True

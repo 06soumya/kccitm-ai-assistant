@@ -69,9 +69,23 @@ async def chat(
         if session.user_id != current_user.user_id:
             raise HTTPException(status_code=403, detail="Session does not belong to you")
 
+    # Admin commands — handle before streaming/non-streaming split
+    _q = req.message.lower().strip()
+    if _q in ("clear cache", "clear the cache", "reset cache", "flush cache"):
+        from api.deps import get_cache
+        cache = get_cache()
+        await cache.clear()
+        return ChatResponse(
+            response="Cache cleared successfully.",
+            session_id=session_id,
+            route_used="ADMIN_CMD",
+            total_time_ms=0,
+            metadata={},
+        )
+
     if req.stream:
         return StreamingResponse(
-            _stream_response(req.message, session_id, orchestrator),
+            _stream_via_process_query(req.message, session_id, orchestrator, current_user.user_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -99,7 +113,62 @@ async def chat(
     )
 
 
-# ── SSE stream generator ──────────────────────────────────────────────────────
+# ── SSE stream generator (Option C: full pipeline then stream text) ──────────
+
+async def _stream_via_process_query(
+    query: str,
+    session_id: str,
+    orchestrator: Orchestrator,
+    user_id: str,
+):
+    """
+    Run the full process_query() pipeline (with sanity checks, OpenAI fallback,
+    etc.), then stream the completed response text to the frontend for the
+    typing animation effect.
+
+    This gives the frontend the same accuracy as non-streaming API calls.
+    """
+    import asyncio
+    start_time = time.time()
+
+    try:
+        yield f"data: {json.dumps({'type': 'status', 'message': 'Analyzing your question...'})}\n\n"
+
+        # Run full pipeline (non-streaming) — gets all corrections
+        result = await orchestrator.process_query(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+        )
+
+        if not result.success:
+            yield f"data: {json.dumps({'type': 'error', 'message': result.error or 'Query failed'})}\n\n"
+            return
+
+        # Stream the completed response text in chunks for typing effect
+        response_text = result.response or ""
+        chunk_size = 8  # characters per chunk — fast but visible typing
+        for i in range(0, len(response_text), chunk_size):
+            chunk = response_text[i:i + chunk_size]
+            yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+            await asyncio.sleep(0.01)  # tiny delay for typing effect
+
+        elapsed = round((time.time() - start_time) * 1000)
+        done_payload: dict = {
+            'type': 'done',
+            'total_time_ms': elapsed,
+            'session_id': session_id,
+            'route_used': result.route_used,
+        }
+        if result.metadata.get("chart_data"):
+            done_payload['chart_data'] = result.metadata["chart_data"]
+        yield f"data: {json.dumps(done_payload)}\n\n"
+
+    except Exception as exc:
+        yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+
+# ── Legacy SSE stream generator (kept for reference) ─────────────────────────
 
 async def _stream_response(
     query: str,

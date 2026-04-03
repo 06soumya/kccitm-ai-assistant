@@ -74,7 +74,7 @@ class SessionManager:
             New Session object
         """
         session_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.utcnow().isoformat() + "Z"
 
         await execute(
             self.db_path,
@@ -162,7 +162,7 @@ class SessionManager:
             The created Message
         """
         msg_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.utcnow().isoformat() + "Z"
         meta_json = json.dumps(metadata) if metadata else None
 
         await execute(
@@ -205,27 +205,38 @@ class SessionManager:
 
     async def get_chat_history(self, session_id: str, limit: int = 20) -> list[dict]:
         """
-        Get recent chat history as a list of {role, content} dicts.
+        Get recent chat history as a list of {role, content, metadata} dicts.
 
         This is the format expected by the LLM client and orchestrator.
+        Metadata is included so the orchestrator can detect active student context
+        (current_student_roll) for follow-up queries.
 
         Args:
             session_id: Session to get history for
             limit: Max messages to return (most recent)
 
         Returns:
-            List of {"role": "user"|"assistant", "content": "..."} in chronological order
+            List of {"role": "user"|"assistant", "content": "...", "metadata": {...}}
+            in chronological order
         """
         rows = await fetch_all(
             self.db_path,
-            """SELECT role, content FROM messages
+            """SELECT role, content, metadata FROM messages
                WHERE session_id = ? AND role IN ('user', 'assistant')
                ORDER BY created_at DESC
                LIMIT ?""",
             (session_id, limit),
         )
-        # Reverse to chronological order
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        result = []
+        for r in reversed(rows):
+            meta = {}
+            if r.get("metadata"):
+                try:
+                    meta = json.loads(r["metadata"])
+                except Exception:
+                    meta = {}
+            result.append({"role": r["role"], "content": r["content"], "metadata": meta})
+        return result
 
     async def get_message_with_metadata(self, message_id: str) -> Message | None:
         """Get a specific message with its full metadata. Used by feedback system (Phase 8)."""

@@ -34,7 +34,7 @@ export default function FeedbackButtons({ messageId, sessionId }: { messageId: s
       </div>
       {showText && (
         <div className="mt-2 flex gap-2">
-          <input value={text} onChange={e => setText(e.target.value)} placeholder="What went wrong?" className="flex-1 text-xs px-2 py-1 border border-gray-200 rounded-md outline-none focus:border-kcc" />
+          <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && text.trim()) submitText(); }} placeholder="What went wrong?" className="flex-1 text-xs px-2 py-1 border border-gray-200 rounded-md outline-none focus:border-kcc" />
           <button onClick={submitText} className="text-xs px-3 py-1 bg-kcc text-white rounded-md font-medium">Send</button>
         </div>
       )}

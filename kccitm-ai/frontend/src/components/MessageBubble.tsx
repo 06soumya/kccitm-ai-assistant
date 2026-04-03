@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import FeedbackButtons from './FeedbackButtons';
 import PipelineIndicator from './PipelineIndicator';
+import ChartRenderer from './ChartRenderer';
+import type { ChartData } from './ChartRenderer';
 import type { Message } from '@/lib/types';
 
 export default function MessageBubble({ message, sessionId }: { message: Message; sessionId: string }) {
@@ -21,6 +23,8 @@ export default function MessageBubble({ message, sessionId }: { message: Message
     );
   }
 
+  const chartData = meta?.chart_data as ChartData | undefined;
+
   return (
     <div className="flex gap-3 mb-4 animate-fadeUp">
       <div className="w-8 h-7 rounded-md flex-shrink-0 shadow-sm bg-kcc-bg flex items-center justify-center">
@@ -34,6 +38,7 @@ export default function MessageBubble({ message, sessionId }: { message: Message
         )}
         <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm text-sm leading-relaxed prose">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          {chartData && <ChartRenderer chart={chartData} />}
         </div>
         <FeedbackButtons messageId={message.id} sessionId={sessionId} />
       </div>

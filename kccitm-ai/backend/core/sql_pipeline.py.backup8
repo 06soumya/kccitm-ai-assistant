@@ -61,17 +61,10 @@ FORMULA_REFERENCE = """
 Do NOT use window functions (OVER, PARTITION BY) for these. Use subqueries instead.
 
 Q: "what percentage of students passed all semesters"
-SQL: SELECT ROUND(passed.cnt * 100.0 / total.cnt, 2) AS pass_all_pct, passed.cnt AS passed, total.cnt AS total FROM (SELECT COUNT(*) AS cnt FROM (SELECT s.roll_no FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE 'CP(%% 0)' AND sr.result_status != 'CP(0)' THEN 1 ELSE 0 END) = 0) t) passed, (SELECT COUNT(DISTINCT roll_no) AS cnt FROM students) total LIMIT 1
+SQL: SELECT ROUND(passed.cnt * 100.0 / total.cnt, 2) AS pass_all_pct, passed.cnt AS passed, total.cnt AS total FROM (SELECT COUNT(DISTINCT s.roll_no) AS cnt FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE 'CP(%% 0)' AND sr.result_status != 'CP(0)' THEN 1 ELSE 0 END) = 0) passed, (SELECT COUNT(DISTINCT roll_no) AS cnt FROM students) total LIMIT 1
 
 Q: "what percentage of female students passed all semesters"
-SQL: SELECT ROUND(passed.cnt * 100.0 / total.cnt, 2) AS pass_pct, passed.cnt AS passed, total.cnt AS total FROM (SELECT COUNT(*) AS cnt FROM (SELECT s.roll_no FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no WHERE s.gender = 'F' GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE 'CP(%% 0)' AND sr.result_status != 'CP(0)' THEN 1 ELSE 0 END) = 0) t) passed, (SELECT COUNT(DISTINCT roll_no) AS cnt FROM students WHERE gender = 'F') total LIMIT 1
-NOTE: For "passed all semesters" queries, ALWAYS use this nested subquery pattern: SELECT COUNT(*) FROM (SELECT roll_no ... GROUP BY roll_no HAVING ...) t. The inner GROUP BY + HAVING filters students, the outer COUNT(*) counts them.
-
-Q: "what percentage of male students passed all semesters"
-SQL: SELECT ROUND(passed.cnt * 100.0 / total.cnt, 2) AS pass_pct, passed.cnt AS passed, total.cnt AS total FROM (SELECT COUNT(*) AS cnt FROM (SELECT s.roll_no FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no WHERE s.gender = 'M' GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE 'CP(%% 0)' AND sr.result_status != 'CP(0)' THEN 1 ELSE 0 END) = 0) t) passed, (SELECT COUNT(DISTINCT roll_no) AS cnt FROM students WHERE gender = 'M') total LIMIT 1
-
-Q: "compare percentage of male vs female students who passed all semesters"
-SQL: SELECT s.gender, COUNT(*) AS passed_all, total.cnt AS total_students, ROUND(COUNT(*) * 100.0 / total.cnt, 2) AS pass_pct FROM (SELECT s2.roll_no, s2.gender FROM students s2 JOIN semester_results sr ON s2.roll_no = sr.roll_no GROUP BY s2.roll_no, s2.gender HAVING SUM(CASE WHEN sr.result_status NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE 'CP(%% 0)' AND sr.result_status != 'CP(0)' THEN 1 ELSE 0 END) = 0) s JOIN (SELECT gender, COUNT(*) AS cnt FROM students GROUP BY gender) total ON s.gender = total.gender GROUP BY s.gender, total.cnt
+SQL: SELECT ROUND(passed.cnt * 100.0 / total.cnt, 2) AS pass_pct, passed.cnt AS passed, total.cnt AS total FROM (SELECT COUNT(DISTINCT s.roll_no) AS cnt FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no WHERE s.gender = 'F' GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE 'CP(%% 0)' AND sr.result_status != 'CP(0)' THEN 1 ELSE 0 END) = 0) passed, (SELECT COUNT(DISTINCT roll_no) AS cnt FROM students WHERE gender = 'F') total LIMIT 1
 
 Q: "pass rate per semester"
 SQL: SELECT sr.semester, ROUND(SUM(CASE WHEN sr.result_status IN ('PASS','PCP','PWG') OR sr.result_status LIKE 'CP(%% 0)' OR sr.result_status = 'CP(0)' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS pass_rate_pct, COUNT(*) AS total_students FROM semester_results sr GROUP BY sr.semester ORDER BY sr.semester LIMIT 50
@@ -94,42 +87,6 @@ NOTE: For "students who got F in N+ subjects": GROUP BY roll_no, HAVING COUNT(*)
 Q: "how many students got at least 1 back in semester 5 batch 2023"
 SQL: SELECT COUNT(DISTINCT sm.roll_no) as students_with_backs FROM subject_marks sm WHERE sm.semester = 5 AND sm.grade = 'F' AND sm.roll_no LIKE '23%%'
 NOTE: CRITICAL — back papers / backlogs are identified by grade = 'F' in subject_marks. Do NOT use back_paper != '--'. The back_paper column contains re-exam marks, not a flag for having backs.
-
-Q: "students with 0 backlogs" or "students who never failed" or "students who passed all semesters"
-SQL: SELECT s.name, s.roll_no, ROUND(AVG(sr.sgpa), 2) AS cgpa FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no GROUP BY s.roll_no, s.name HAVING SUM(CASE WHEN sr.result_status NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE 'CP(%% 0)' AND sr.result_status != 'CP(0)' THEN 1 ELSE 0 END) = 0 ORDER BY cgpa DESC LIMIT 200
-NOTE: 0 backlogs means result_status is PASS/PCP/PWG/CP(0)/CP( 0) in EVERY semester. MUST use semester_results.result_status — do NOT use subject_marks.grade for this. Include name, roll_no, and CGPA.
-
-Q: "how many students have 0 backlogs"
-SQL: SELECT COUNT(*) AS student_count FROM (SELECT s.roll_no FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no GROUP BY s.roll_no HAVING SUM(CASE WHEN sr.result_status NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE 'CP(%% 0)' AND sr.result_status != 'CP(0)' THEN 1 ELSE 0 END) = 0) t
-NOTE: MUST use the nested COUNT(*) FROM (SELECT ... GROUP BY ... HAVING) pattern. MUST use semester_results.result_status.
-
-Q: "which subject has most back papers" or "subject with highest fail rate"
-SQL: SELECT sm.subject_name, COUNT(*) as fail_count FROM subject_marks sm WHERE sm.grade = 'F' GROUP BY sm.subject_name ORDER BY fail_count DESC LIMIT 10
-NOTE: For subject-wise back papers, GROUP BY subject_name only (NOT subject_code — same subject can have multiple codes like BAS403 and BAS403H). Do NOT filter by semester unless user specifies one.
-
-Q: "students who never failed" or "students who did NOT get F"
-SQL: SELECT s.name, s.roll_no FROM students s WHERE s.roll_no NOT IN (SELECT DISTINCT roll_no FROM subject_marks WHERE grade = 'F') LIMIT 200
-NOTE: For negation ("never", "not", "no backlogs", "did not fail"), use NOT IN subquery. Do NOT try to use HAVING COUNT = 0 with the outer table — use WHERE roll_no NOT IN (SELECT roll_no FROM ... WHERE condition).
-
-Q: "subjects where nobody failed" or "subjects with 0 F grades"
-SQL: SELECT DISTINCT subject_name FROM subject_marks WHERE subject_name NOT IN (SELECT DISTINCT subject_name FROM subject_marks WHERE grade = 'F')
-NOTE: Same NOT IN pattern for subject-level negation.
-
-Q: "topper of each branch" or "best student per branch"
-SQL: SELECT s.branch, s.name, s.roll_no, ROUND(AVG(sr.sgpa), 2) AS cgpa FROM students s JOIN semester_results sr ON s.roll_no = sr.roll_no GROUP BY s.roll_no, s.name, s.branch ORDER BY s.branch, cgpa DESC LIMIT 200
-NOTE: For "topper per group", GROUP BY the student with the group column, ORDER BY group + metric DESC. The response generator should pick the top 1 per group. Do NOT use window functions.
-
-Q: "worst subject per semester" or "subject with most fails each semester"
-SQL: SELECT sm.semester, sm.subject_name, COUNT(*) as fail_count FROM subject_marks sm WHERE sm.grade = 'F' GROUP BY sm.semester, sm.subject_name ORDER BY sm.semester, fail_count DESC LIMIT 200
-NOTE: For "per semester" ranking, GROUP BY semester + subject, ORDER BY semester + metric. The response generator picks top 1 per semester.
-
-Q: "SGPA trend for batch 2021" or "average SGPA per semester"
-SQL: SELECT sr.semester, ROUND(AVG(sr.sgpa), 2) as avg_sgpa, COUNT(DISTINCT sr.roll_no) as students FROM semester_results sr WHERE sr.roll_no LIKE '21%%' GROUP BY sr.semester ORDER BY sr.semester
-NOTE: For trends, GROUP BY semester and ORDER BY semester. Include count of students per semester.
-
-Q: "percentage of students who failed sem 1 that also failed sem 2"
-SQL: SELECT ROUND(b.cnt * 100.0 / s1.cnt, 2) as pct, b.cnt as failed_both, s1.cnt as failed_first FROM (SELECT COUNT(DISTINCT sr1.roll_no) as cnt FROM semester_results sr1 JOIN semester_results sr2 ON sr1.roll_no = sr2.roll_no WHERE sr1.semester = 1 AND sr2.semester = 2 AND sr1.result_status NOT IN ('PASS','PCP','PWG') AND sr1.result_status NOT LIKE 'CP(%% 0)' AND sr1.result_status != 'CP(0)' AND sr2.result_status NOT IN ('PASS','PCP','PWG') AND sr2.result_status NOT LIKE 'CP(%% 0)' AND sr2.result_status != 'CP(0)') b, (SELECT COUNT(DISTINCT roll_no) as cnt FROM semester_results WHERE semester = 1 AND result_status NOT IN ('PASS','PCP','PWG') AND result_status NOT LIKE 'CP(%% 0)' AND result_status != 'CP(0)') s1
-NOTE: For "percentage of X who also Y", use self-join: first subquery counts students matching BOTH conditions, second counts students matching only the first. Then divide.
 """
 
 # ── KCCITM-specific domain hints (things schema reader can't discover) ────────
@@ -590,7 +547,7 @@ class SQLValidator:
     ]
 
     MAX_JOINS = 3
-    MAX_SUBQUERIES = 4
+    MAX_SUBQUERIES = 2
     MAX_RESULT_LIMIT = 200
 
     @staticmethod
@@ -706,10 +663,7 @@ def validate_sql_structure(
     if not sql_upper.startswith("SELECT"):
         return False, "Must start with SELECT"
 
-    # Strip string literals before counting parens — values like 'CP( 0)' or
-    # 'CP(%' contain parentheses that aren't structural SQL parens.
-    sql_no_strings = re.sub(r"'[^']*'", "''", sql)
-    if sql_no_strings.count("(") != sql_no_strings.count(")"):
+    if sql_upper.count("(") != sql_upper.count(")"):
         return False, "Mismatched parentheses"
 
     tables_upper = {t.upper() for t in valid_tables}
@@ -780,16 +734,6 @@ class SQLPipeline:
                 "SELECT * FROM students WHERE name LIKE %s LIMIT 10",
                 (f"%{identifier.upper()}%",),
             )
-            # If exact phrase match fails, try matching all individual words
-            # e.g., "bipasa sarkar" → WHERE name LIKE '%BIPASA%' AND name LIKE '%SARKAR%'
-            if not students and " " in identifier:
-                words = identifier.upper().split()
-                where_parts = " AND ".join(f"name LIKE %s" for _ in words)
-                params = tuple(f"%{w}%" for w in words)
-                students = await execute_query(
-                    f"SELECT * FROM students WHERE {where_parts} LIMIT 10",
-                    params,
-                )
 
         if not students:
             return {"found": 0, "students": [], "detail": None}
@@ -1024,45 +968,9 @@ class SQLPipeline:
         # Pattern: "subjects where X% got grade Y"
         if "subjects" in q and ("grade" in q or "%" in q or "percent" in q):
             return [{"step": 1, "question": query, "hint": (
-                "GROUP BY sm.subject_name with HAVING clause "
+                "GROUP BY sm.subject_code, sm.subject_name with HAVING clause "
                 "on the percentage. Use SUM(CASE WHEN sm.grade = 'F' THEN 1 "
                 "ELSE 0 END) * 100.0 / COUNT(*)."
-            )}]
-
-        # Pattern: negation ("never", "not", "no backlogs", "did not")
-        if any(w in q for w in ["never failed", "not fail", "no backlog", "0 backlog",
-                                 "did not fail", "nobody failed", "no one failed",
-                                 "zero backlog", "never got f"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use NOT IN subquery: WHERE roll_no NOT IN (SELECT DISTINCT roll_no "
-                "FROM subject_marks WHERE grade = 'F'). For semester-level: use "
-                "semester_results.result_status with HAVING SUM(CASE non-pass) = 0."
-            )}]
-
-        # Pattern: "per branch" / "per semester" / "each branch"
-        if any(w in q for w in ["per branch", "each branch", "per semester", "each semester",
-                                 "by branch", "by semester", "every branch"]):
-            return [{"step": 1, "question": query, "hint": (
-                "GROUP BY the grouping column (branch/semester) + student, ORDER BY "
-                "group + metric. For 'topper per branch': GROUP BY roll_no, name, branch "
-                "ORDER BY branch, cgpa DESC. Do NOT use window functions."
-            )}]
-
-        # Pattern: "trend" / "across semesters"
-        if any(w in q for w in ["trend", "across semester", "across all semester",
-                                 "per semester", "semester wise", "semesterwise"]):
-            return [{"step": 1, "question": query, "hint": (
-                "GROUP BY semester, ORDER BY semester. Include AVG/COUNT as needed. "
-                "For batch filter add WHERE roll_no LIKE 'XX%'."
-            )}]
-
-        # Pattern: "of those who" / "among those" (nested percentage)
-        if any(w in q for w in ["of those who", "among those", "also failed",
-                                 "that also", "who also"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use self-join: sr1 JOIN sr2 ON roll_no. First subquery counts "
-                "students matching BOTH conditions, second counts matching only "
-                "the first condition. Divide for percentage."
             )}]
 
         # Simple query — no decomposition needed
