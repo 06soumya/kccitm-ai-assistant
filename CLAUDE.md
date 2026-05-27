@@ -1,61 +1,120 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
+
+## What this is
+
+**KCCITM AI Assistant** — a self-improving RAG + LLM academic chatbot. Faculty/admin ask natural-language questions about student academic records; the system routes each query to a SQL pipeline (rankings, counts, averages), a RAG pipeline (HyDE + multi-query + Milvus hybrid search + reranking), or runs both in parallel (HYBRID). Every response feeds a per-request feedback collector and a nightly self-improvement loop (failure classification → training-candidate accumulation → optional LoRA fine-tune).
+
+The legacy Streamlit prototype was removed in commit `02fec95`. The active system is the FastAPI backend + Next.js frontend under `kccitm-ai/`.
+
+## Layout
+
+```
+kccitm-ai-assistant/
+├── docker-compose.yml        ← MySQL + Milvus (started from repo root)
+├── README.md                 ← User-facing quick start
+├── data/models/Modelfile     ← Ollama Modelfile (reference)
+└── kccitm-ai/
+    ├── backend/              ← FastAPI + Ollama
+    │   ├── main.py           ← Entry: uvicorn main:app (port 8000)
+    │   ├── config.py         ← Pydantic settings (env-driven)
+    │   ├── api/routes/       ← chat, auth, sessions, feedback, admin, dashboard
+    │   ├── core/             ← orchestrator, router, sql_pipeline, rag_pipeline,
+    │   │                       query_normalizer (Hinglish), query_understander,
+    │   │                       hyde, multi_query, reranker, compressor,
+    │   │                       context_builder, llm_client, openai_fallback,
+    │   │                       sql_examples_store, schema_reader, session_manager,
+    │   │                       cache, faq_engine, aktu_notifications
+    │   ├── adaptive/         ← feedback_collector, failure_classifier,
+    │   │                       quality_scorer, query_healer, prompt_evolver,
+    │   │                       prompt_ab_tester, training_data_manager,
+    │   │                       star_sql, faq_generator, rechunker, chunk_analyzer
+    │   ├── jobs/             ← scheduler + 5 cron jobs (started in lifespan)
+    │   ├── ingestion/        ← One-time ETL pipeline
+    │   ├── training/         ← Offline LoRA fine-tuning (manual)
+    │   ├── tools/            ← CLI utilities + runtime middleware (security, logger)
+    │   ├── tests/            ← pytest suite
+    │   └── db/               ← mysql_client (aiomysql), milvus_client, sqlite_client
+    └── frontend/             ← Next.js 16 + React 19 + Tailwind
+        └── src/app/          ← /, /chat, /admin/{prompts,models,faqs,training,
+                                feedback,healing,chunks,system}
+```
 
 ## Commands
 
-**Run the main application:**
+**Start infrastructure** (from repo root):
 ```
-streamlit run app.py
+docker compose up -d
 ```
 
-**Install dependencies:**
+**Run backend**:
 ```
+cd kccitm-ai/backend
+python3.12 -m venv venv312 && source venv312/bin/activate
 pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-**Test database connectivity:**
+**Run frontend**:
 ```
-python test_mysql.py
+cd kccitm-ai/frontend
+npm install && npm run dev    # http://localhost:3001
 ```
 
-## Architecture
+**Bootstrap data** (one-time, from `kccitm-ai/backend/`):
+```
+python -m ingestion.etl
+python -m ingestion.chunker
+python -m ingestion.embedder
+python -m ingestion.milvus_indexer
+python -m ingestion.init_prompts
+python -m ingestion.create_admin
+```
 
-This is the **KCCITM AI Assistant** — a Streamlit chatbot for querying student academic records from a MySQL database. It uses RAG (FAISS + SentenceTransformers) for a small career counseling knowledge base, but the primary function is structured NL-to-query intent parsing over student marks data.
+**Tests** (from `kccitm-ai/backend/`): `pytest tests/`
 
-### Production App: `app.py`
+## Request pipeline
 
-The main file. Query handling pipeline:
-1. **Intent detection** — regex/keyword patterns classify the query as one of: roll number lookup, name search, topper query (subject-level or batch-level), or follow-up on a previous student
-2. **`handle_db_query()`** routes to the appropriate path
-3. **`execute_student_query()`** handles per-student queries (marks, averages, percentage, best/weakest subject, semester filter)
-4. Results are typed dicts (`kind: "text" | "table" | "marks_full"`) and stored in `st.session_state.current_chat` for rendering
+`POST /api/chat` → [`orchestrator.process_query`](kccitm-ai/backend/core/orchestrator.py):
 
-**Session state** tracks: `last_roll`, `last_student_df/semester_df/subject_df`, `pending_name_candidates` (for disambiguation when multiple students match a name search), and `past_query_history`. Persistent memory is saved to `chat_memory.json`.
+1. Session history load (SQLite)
+2. Exact + semantic cache check (SQLite)
+3. FAQ engine (Milvus `faq`)
+4. AKTU notifications / knowledge check (Milvus `aktu_knowledge`)
+5. Meta-question detection (concept Qs go to OpenAI fallback if enabled)
+6. [`query_understander.understand`](kccitm-ai/backend/core/query_understander.py) — Hinglish normalization + intent extraction
+7. Student lookup short-circuit (name/roll → SQL pipeline)
+8. [`router.route`](kccitm-ai/backend/core/router.py) → `SQL` | `RAG` | `HYBRID`
+9. Pipeline execution (HYBRID runs both via `asyncio.gather`)
+10. OpenAI fallback if local output is weak and `OPENAI_ENABLED=True`
+11. Cache + session write
+12. Return `QueryResponse` with `route_used`, timing, and metadata
 
-**Subject aliases** (`SUBJECT_ALIASES` dict) map informal names and subject codes to canonical names used for DB matching (e.g., "pps", "kcs101t" → "programming for problem solving").
+## Model & store config
 
-### Database Layer: `db_marks.py`
+Defaults in [config.py](kccitm-ai/backend/config.py); override via `.env`.
 
-Single source of truth for all DB queries. Connects to MySQL `student_db`, table `university_marks` (columns: `roll_no`, `jsontext`). The `jsontext` column stores a JSON blob per student with fields: `name`, `rollno`, `enrollment`, `course`, `branch`, `fname`, `gender`, and `result` (array of semester objects, each with `semester`, `session`, `result_status`, `total_marks_obt`, `SGPA`, and `marks` array).
+- LLM: Ollama `kccitm-v2` at `http://localhost:11434` (draft model `qwen3:1.7b`)
+- Embeddings: `nomic-embed-text` (768-dim)
+- MySQL: `kccitm` DB, aiomysql pool 2–10
+- Milvus: lite (`KCCITM_MILVUS_URI=<file>`) or HTTP (`MILVUS_HOST:MILVUS_PORT`); 3 collections — `student_results`, `faq`, `aktu_knowledge`
+- SQLite: `data/{sessions,cache,feedback,prompts}.db`
+- OpenAI fallback: disabled by default (`OPENAI_ENABLED=False`)
 
-Key functions:
-- `get_marks(roll_no)` → returns `(student_df, semester_df, subject_df)` parsed from JSON
-- `search_students_by_name(name_query, batch_year)` → scans all rows, scores by exact/contains/token match
-- `get_subject_toppers(batch_year, semester_no, subject_query)` → filters batch by roll prefix, finds top scorers
-- `get_batch_toppers_by_cgpa(batch_year)` → derives CGPA as mean of all SGPAs, ranks batch
+## Self-improvement loop
 
-Batch year is derived from the first 2 digits of the roll number (e.g., roll `2104920100002` → batch 2021).
+- Per-request: `feedback_collector.detect_implicit_signals`, `failure_classifier.classify_sql_error`
+- Daily 02:00 UTC: healing — consolidates feedback, classifies failures, accumulates training candidates
+- Daily 02:30 UTC: STaR-SQL — rationalizes user-corrected SQL into training pairs
+- Daily 03:00 UTC: FAQ generation from successful queries
+- Weekly Sun 03:00 UTC: prompt evolution + A/B-test evaluation
+- Monthly (manual): LoRA fine-tune via `training/train_lora.py` when ≥500 pairs collected
 
-### Other Files
+## Editing notes
 
-- `app.py` is the only production entry point — the other files are prototypes/experiments:
-  - `main.py` — CLI RAG demo using Ollama/phi3 locally
-  - `marks_chatbot.py` — early CLI marks viewer
-  - `sql_chatbot.py` — keyword-based SQL chatbot prototype
-  - `sql_executor.py` + `db_connection.py` + `db_agent.py` — utility/prototype DB helpers
-
-### Database Configuration
-
-MySQL credentials are hardcoded in `db_marks.py` (and duplicated in prototype files). The active connection used by `app.py` is in `db_marks.get_connection()`:
-- host: `localhost`, user: `root`, database: `student_db`
+- `core/orchestrator.py` (~1700 LOC) and `core/sql_pipeline.py` (~1660 LOC) are the largest modules — change carefully.
+- New routes go in `api/routes/` and must be mounted in `main.py`.
+- Per-request adaptive logic must be wired into `orchestrator.py` or `sql_pipeline.py`. Batch logic goes in `jobs/` and is registered in `jobs/scheduler.py`.
+- Frontend backend URL is `NEXT_PUBLIC_API_URL`; admin calls go through `src/lib/adminApi.ts`, chat through `src/lib/api.ts` and `src/lib/sse.ts`.
+- MySQL uses defaults; add a `./mysql-custom.cnf` mount under the `mysql_kccitm` service in [docker-compose.yml](docker-compose.yml) if you need to override server config.

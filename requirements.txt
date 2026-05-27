@@ -1,8 +1,0 @@
-streamlit
-sentence-transformers
-mysql-connector-python
-pandas
-openai
-pytest==8.3.5
-bcrypt==5.0.0
-python-dotenv==1.2.2

@@ -11,10 +11,9 @@ services:
       - '3306:3306'
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./mysql-custom.cnf:/etc/mysql/conf.d/custom.cnf
 
   milvus:
-    image: milvusdb/milvus:latest
+    image: milvusdb/milvus:v2.5.0
     command: ['milvus', 'run', 'standalone']
     restart: always
     ports:
