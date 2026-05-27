@@ -94,7 +94,7 @@ async def health_check():
     try:
         milvus = get_milvus()
         stats = milvus.get_collection_stats()
-        checks["milvus"] = {"status": "ok", "chunks": stats.get("num_entities", 0)}
+        checks["milvus"] = {"status": "ok", "chunks": stats.get("row_count", 0)}
     except Exception as exc:
         checks["milvus"] = {"status": "error", "message": str(exc)}
 
