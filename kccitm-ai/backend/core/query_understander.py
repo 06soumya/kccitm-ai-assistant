@@ -480,6 +480,82 @@ class QueryUnderstander:
             logger.warning("Query planning failed (%s) — using fallback", exc)
             return self._fallback(query, chat_history)
 
+    async def re_plan(
+        self,
+        query: str,
+        first_plan: dict,
+        chat_history: list[dict] | None = None,
+    ) -> dict | None:
+        """
+        Adaptive escalation (Step 6). Called by the orchestrator when the
+        first planner pass returned confidence < the routing floor and
+        didn't already flag needs_clarification.
+
+        Runs a second planner call with deterministic temperature and a
+        bigger token budget, plus a prompt addendum that tells the model
+        to commit to ONE reading with confidence ≥ 0.85, or otherwise
+        flip to needs_clarification with concrete options.
+
+        Returns the new plan, or None if the LLM call fails (caller keeps
+        the first-pass plan).
+        """
+        history_block = self._format_history(chat_history)
+
+        from core.dataset_context import get_dataset_context
+        dataset_ctx = get_dataset_context()
+
+        first_conf = float(first_plan.get("confidence") or 0.0)
+        first_reasoning = str(first_plan.get("reasoning") or "(no reasoning)")[:300]
+        first_amb = first_plan.get("ambiguities") or []
+
+        replan_preamble = (
+            "=== ESCALATION: YOUR FIRST ATTEMPT WAS UNCERTAIN ===\n"
+            f"First-pass confidence: {first_conf:.2f} (below the 0.70 routing floor).\n"
+            f"First-pass reasoning: {first_reasoning}\n"
+            f"Ambiguities you flagged: {first_amb}\n"
+            f"First-pass picked: intent={first_plan.get('intent')} "
+            f"operation={first_plan.get('operation')} route={first_plan.get('route')}.\n"
+            "\n"
+            "Think step-by-step this time. Re-read the user query and the recent\n"
+            "chat history. Use the dataset context to decide what's actually\n"
+            "answerable. Pick the SINGLE most likely interpretation.\n"
+            "\n"
+            "You MUST do ONE of these — no middle ground:\n"
+            "  (a) Commit to one reading with confidence ≥ 0.85, or\n"
+            "  (b) Set needs_clarification=true with 2-4 concrete clarification_options\n"
+            "      phrased as full, runnable queries (e.g. 'Average marks in DBMS',\n"
+            "      not 'Average').\n"
+            "Do NOT return confidence between 0.5 and 0.85 — that's the band that\n"
+            "triggered this re-plan in the first place.\n"
+            "==================================================\n\n"
+        )
+
+        prompt = replan_preamble + PLAN_PROMPT.format(
+            query=query.replace('"', '\\"'),
+            history_block=history_block,
+            dataset_ctx=dataset_ctx,
+        )
+
+        try:
+            response = await self.llm.generate(
+                prompt=prompt,
+                temperature=0.0,
+                max_tokens=1500,
+                format="json",
+                options={"temperature": 0.0},
+            )
+            plan = self._parse_response(response, query)
+            logger.info(
+                "Re-plan: intent=%s op=%s route=%s conf=%.2f clarify=%s | %s",
+                plan["intent"], plan["operation"], plan["route"],
+                plan["confidence"], plan["needs_clarification"],
+                plan["reasoning"][:80],
+            )
+            return plan
+        except Exception as exc:
+            logger.warning("Re-plan LLM call failed: %s", exc)
+            return None
+
     def _format_history(self, chat_history: list[dict] | None) -> str:
         if not chat_history:
             return "Chat history: (none — this is the first message)"

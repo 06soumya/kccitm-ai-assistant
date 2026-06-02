@@ -23,6 +23,11 @@ export interface MessageMetadata {
   route_used?: string;
   total_time_ms?: number;
   cache_hit?: boolean;
+  // Clarification flow: set when the Query Planner can't confidently route
+  // the query and asks the user to pick from numbered options.
+  needs_clarification?: boolean;
+  clarification_question?: string;
+  clarification_options?: string[];
   [key: string]: unknown;
 }
 
@@ -50,6 +55,9 @@ export interface SSEEvent {
   total_time_ms?: number;
   session_id?: string;
   chart_data?: Record<string, unknown>;
+  needs_clarification?: boolean;
+  clarification_question?: string;
+  clarification_options?: string[];
 }
 
 export interface FeedbackRequest {

@@ -361,8 +361,30 @@ class Orchestrator:
                               "student_name": None, "roll_no": None,
                               "is_followup": False, "active_student_followup": False}
 
+            # Step 2.82: Adaptive escalation (Step 6). If the first plan was
+            # uncertain (conf below routing floor) and didn't already flag
+            # needs_clarification, retry the planner with a bigger budget and
+            # a "think harder" addendum. If the second pass is still uncertain,
+            # force needs_clarification so the user chooses instead of the bot
+            # guessing wrong.
+            understood = await self._escalate_if_uncertain(
+                query, understood, chat_history,
+            )
+
             expanded_query = understood["expanded_query"]
             intent = understood["intent"]
+
+            # Step 2.84: Clarification short-circuit — must come BEFORE the
+            # meta/student-lookup handlers so an uncertain query that the
+            # escalator flipped to needs_clarification doesn't get dispatched
+            # to a confident-path handler on a low-confidence first guess.
+            if understood.get("needs_clarification"):
+                clarify = self._clarification_response(query, understood, t0)
+                if session_id:
+                    await self._save_to_session(
+                        session_id, query, clarify.response, clarify.metadata,
+                    )
+                return clarify
 
             # Step 2.85: Dataset-meta handler. The planner flags overview /
             # "what data do you have" queries with operation="meta". The
@@ -447,17 +469,8 @@ class Orchestrator:
                 except Exception as exc:
                     logger.warning("Student lookup failed, falling through to router: %s", exc)
 
-            # Step 2.95: Clarification short-circuit. The planner flagged the
-            # query as ambiguous and gave us a question + 2-4 options. Return
-            # that directly — no SQL, no RAG, no router call. Step 5 will
-            # render the options as buttons on the frontend.
-            if understood.get("needs_clarification"):
-                clarify = self._clarification_response(query, understood, t0)
-                if session_id:
-                    await self._save_to_session(
-                        session_id, query, clarify.response, clarify.metadata,
-                    )
-                return clarify
+            # (Step 2.95 clarification short-circuit removed — moved to Step 2.84
+            # so it runs BEFORE meta/student-lookup handlers, see Step 6 escalation.)
 
             # Step 3: Route. Prefer the planner's route when it's confident.
             # Falls back to the router's LLM classifier only when the plan
@@ -624,7 +637,24 @@ class Orchestrator:
                           "student_name": None, "roll_no": None,
                           "is_followup": False, "active_student_followup": False}
 
+        # Adaptive escalation (Step 6) — same as process_query.
+        understood = await self._escalate_if_uncertain(
+            query, understood, chat_history,
+        )
+
         expanded_query = understood["expanded_query"]
+
+        # Clarification short-circuit — must come BEFORE meta/student-lookup
+        # so an uncertain query that the escalator flipped doesn't dispatch
+        # to a confident-path handler.
+        if understood.get("needs_clarification"):
+            clarify = self._clarification_response(query, understood, time.time())
+            yield clarify.response
+            if session_id:
+                await self._save_to_session(
+                    session_id, query, clarify.response, clarify.metadata,
+                )
+            return
 
         # Dataset-meta (streaming): LLM-driven answer; NOT auto-cached —
         # feedback endpoint promotes the answer on thumbs-up only.
@@ -677,15 +707,7 @@ class Orchestrator:
             except Exception as exc:
                 logger.warning("Student lookup stream failed: %s", exc)
 
-        # Clarification short-circuit for streaming — yield as a single chunk.
-        if understood.get("needs_clarification"):
-            clarify = self._clarification_response(query, understood, time.time())
-            yield clarify.response
-            if session_id:
-                await self._save_to_session(
-                    session_id, query, clarify.response, clarify.metadata,
-                )
-            return
+        # (Clarification short-circuit moved up — see top of this method.)
 
         # Route — prefer plan when confident, fall back to router LLM call.
         plan_route = understood.get("route", "AUTO")
@@ -990,6 +1012,72 @@ class Orchestrator:
     # threshold used by the escalation logic in Step 6.
     _PLAN_ROUTE_CONFIDENCE_FLOOR = 0.7
 
+    async def _escalate_if_uncertain(
+        self,
+        query: str,
+        understood: dict,
+        chat_history: list[dict] | None,
+    ) -> dict:
+        """
+        Step 6 — Adaptive escalation.
+
+        If the first planner pass returned confidence below the routing
+        floor and didn't already flag needs_clarification, run a deeper
+        re-plan (bigger token budget + "think harder" addendum). If the
+        second pass is STILL uncertain, force needs_clarification so the
+        user picks instead of the bot guessing.
+
+        Returns the (possibly improved / clarification-flagged) plan. The
+        caller doesn't need to check whether escalation ran — the returned
+        dict is always safe to dispatch on.
+        """
+        if understood.get("needs_clarification"):
+            return understood
+
+        first_conf = float(understood.get("confidence") or 0.0)
+        if first_conf >= self._PLAN_ROUTE_CONFIDENCE_FLOOR:
+            return understood
+
+        logger.info(
+            "Plan conf=%.2f below floor (%.2f) — escalating with deeper re-plan",
+            first_conf, self._PLAN_ROUTE_CONFIDENCE_FLOOR,
+        )
+
+        try:
+            deeper = await self.understander.re_plan(query, understood, chat_history)
+        except Exception as exc:
+            logger.warning("Escalation re-plan raised: %s — keeping first plan", exc)
+            deeper = None
+
+        if deeper:
+            understood = deeper
+
+        # If we're still uncertain after the deeper pass, force clarification
+        # rather than dispatching a low-confidence plan.
+        new_conf = float(understood.get("confidence") or 0.0)
+        if (
+            not understood.get("needs_clarification")
+            and new_conf < self._PLAN_ROUTE_CONFIDENCE_FLOOR
+        ):
+            logger.info(
+                "Re-plan still uncertain (conf=%.2f) — forcing clarification",
+                new_conf,
+            )
+            understood["needs_clarification"] = True
+            if not understood.get("clarification_question"):
+                understood["clarification_question"] = (
+                    "I'm not sure I understood — could you give me more detail?"
+                )
+            if not understood.get("clarification_options"):
+                understood["clarification_options"] = [
+                    "Show me top students in a branch",
+                    "Average SGPA in a branch",
+                    "Tell me about a specific student",
+                    "How many students passed in a session",
+                ]
+
+        return understood
+
     def _plan_entities_to_filters(self, entities: dict) -> dict:
         """Map planner entities → SQL pipeline filter keys."""
         if not entities:
@@ -1060,24 +1148,17 @@ class Orchestrator:
     ) -> "QueryResponse":
         """
         Build a QueryResponse asking the user to disambiguate. The visible
-        text contains the question + numbered options for chat display;
-        metadata carries the structured fields the Step 5 frontend will
-        render as clickable buttons.
+        text is JUST the question — the frontend renders clarification_options
+        from metadata as clickable buttons, so duplicating them inline would
+        be visual noise. If a future non-button client needs the inline list,
+        reconstruct it from metadata.clarification_options.
         """
         question = (
             plan.get("clarification_question")
             or "Could you clarify what you mean?"
         )
         options = plan.get("clarification_options") or []
-
-        lines = [question]
-        if options:
-            lines.append("")
-            for i, opt in enumerate(options, start=1):
-                lines.append(f"{i}. {opt}")
-            lines.append("")
-            lines.append("Reply with the number or rephrase your question.")
-        text = "\n".join(lines)
+        text = question
 
         return QueryResponse(
             success=True,

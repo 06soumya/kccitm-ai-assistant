@@ -162,6 +162,17 @@ async def _stream_via_process_query(
         }
         if result.metadata.get("chart_data"):
             done_payload['chart_data'] = result.metadata["chart_data"]
+        # Forward clarification fields so the frontend can render option
+        # buttons. Emitted by the planner via Orchestrator._clarification_response
+        # whenever the query is ambiguous (e.g. "show me" with no entities).
+        if result.metadata.get("needs_clarification"):
+            done_payload['needs_clarification'] = True
+            done_payload['clarification_question'] = result.metadata.get(
+                "clarification_question", ""
+            )
+            done_payload['clarification_options'] = result.metadata.get(
+                "clarification_options", []
+            )
         yield f"data: {json.dumps(done_payload)}\n\n"
 
     except Exception as exc:

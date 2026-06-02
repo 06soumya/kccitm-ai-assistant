@@ -7,7 +7,13 @@ import ChartRenderer from './ChartRenderer';
 import type { ChartData } from './ChartRenderer';
 import type { Message } from '@/lib/types';
 
-export default function MessageBubble({ message, sessionId }: { message: Message; sessionId: string }) {
+interface MessageBubbleProps {
+  message: Message;
+  sessionId: string;
+  onSelectOption?: (optionText: string) => void;
+}
+
+export default function MessageBubble({ message, sessionId, onSelectOption }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const meta = message.metadata;
 
@@ -24,6 +30,8 @@ export default function MessageBubble({ message, sessionId }: { message: Message
   }
 
   const chartData = meta?.chart_data as ChartData | undefined;
+  const showClarification = !!meta?.needs_clarification && Array.isArray(meta?.clarification_options) && (meta?.clarification_options?.length ?? 0) > 0;
+  const clarificationOptions: string[] = showClarification ? (meta?.clarification_options as string[]) : [];
 
   return (
     <div className="flex gap-3 mb-4 animate-fadeUp">
@@ -39,6 +47,20 @@ export default function MessageBubble({ message, sessionId }: { message: Message
         <div className="px-4 py-3 bg-white border border-gray-200 rounded-2xl rounded-tl-sm text-sm leading-relaxed prose">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
           {chartData && <ChartRenderer chart={chartData} />}
+          {showClarification && onSelectOption && (
+            <div className="not-prose mt-3 flex flex-col gap-2">
+              {clarificationOptions.map((opt, i) => (
+                <button
+                  key={i}
+                  onClick={() => onSelectOption(opt)}
+                  className="text-left px-3 py-2 border border-kcc/30 bg-kcc-bg/40 hover:bg-kcc-bg hover:border-kcc rounded-lg text-sm text-gray-800 transition-all"
+                >
+                  <span className="text-kcc font-semibold mr-2">{i + 1}.</span>
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <FeedbackButtons messageId={message.id} sessionId={sessionId} />
       </div>

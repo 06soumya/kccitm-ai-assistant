@@ -87,6 +87,11 @@ export function useChat({
                 total_time_ms: event.total_time_ms,
                 route_used:    routeUsed || undefined,
                 ...(event.chart_data ? { chart_data: event.chart_data } : {}),
+                ...(event.needs_clarification ? {
+                  needs_clarification:    true,
+                  clarification_question: event.clarification_question,
+                  clarification_options:  event.clarification_options,
+                } : {}),
               },
               created_at: new Date().toISOString(),
             };

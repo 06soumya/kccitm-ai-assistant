@@ -30,7 +30,12 @@ export default function ChatWindow({ sessionId, initialMessages = [] }: { sessio
           </div>
         )}
         {messages.map(msg => (
-          <MessageBubble key={msg.id} message={msg} sessionId={sessionId} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            sessionId={sessionId}
+            onSelectOption={send}
+          />
         ))}
         {isLoading && streamingText && (
           <div className="flex gap-3 mb-4">
