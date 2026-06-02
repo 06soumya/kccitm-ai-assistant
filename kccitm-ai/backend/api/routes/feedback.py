@@ -182,6 +182,30 @@ async def submit_feedback(
     if req.chunks_used:
         background_tasks.add_task(update_chunk_analytics, req.chunks_used)
 
+    # 7a. META: only-cache-on-thumbs-up. We deliberately did NOT auto-cache
+    # the META answer in the orchestrator — wrong first answers would
+    # otherwise be replayed forever. On rating>=4 (thumbs up), we promote
+    # the answer to the cache so the next identical ask returns instantly.
+    if (
+        req.rating >= 4
+        and req.route_used
+        and req.route_used.upper() == "META"
+        and req.query_text
+        and req.response_text
+    ):
+        try:
+            from api.deps import get_cache
+            cache = get_cache()
+            await cache.store(
+                query=req.query_text,
+                response=req.response_text,
+                route_used="META",
+                metadata={"source": "planner_meta", "promoted_from_feedback": True},
+            )
+            logger.info("META response cached after thumbs-up: %s", req.query_text[:60])
+        except Exception as exc:
+            logger.warning("META cache-promotion failed: %s", exc)
+
     # 7. STaR-SQL: auto-collect training data from successful SQL queries
     if req.rating >= 4 and req.route_used and "SQL" in req.route_used.upper() and req.query_text:
         async def _star_collect():

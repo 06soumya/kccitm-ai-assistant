@@ -181,6 +181,34 @@ class Orchestrator:
             query = normalize_query(query)
             q_lower = query.lower().strip()  # refresh after normalization
 
+            # Step 0: Pre-cache garbage/empty guard. The semantic cache can
+            # match a vague or nonsensical query to an unrelated cached
+            # answer (the "asdfgh" → cached compiler-design table case).
+            # If the input is empty/punct-only or has no recognisable
+            # academic tokens, short-circuit to a clarification BEFORE the
+            # cache check so the user always sees the right prompt.
+            from core.query_understander import (
+                _too_short_or_punct, _looks_like_garbage, _clarify_plan,
+            )
+            if _too_short_or_punct(query) or _looks_like_garbage(query):
+                fallback_plan = _clarify_plan(
+                    query,
+                    question="I didn't quite catch what you meant. What would you like to know?",
+                    options=[
+                        "Show me top students in a branch",
+                        "Average SGPA in a branch",
+                        "Tell me about a specific student",
+                        "How many students passed in a session",
+                    ],
+                    reason="Pre-cache guard: empty/garbage query — never reach cache.",
+                )
+                clarify = self._clarification_response(query, fallback_plan, t0)
+                if session_id:
+                    await self._save_to_session(
+                        session_id, query, clarify.response, clarify.metadata,
+                    )
+                return clarify
+
             # Step 1: Load session history (if session_id provided and no explicit history)
             if session_id and chat_history is None:
                 raw_history = await self.session_manager.get_chat_history(session_id)
@@ -279,33 +307,10 @@ class Orchestrator:
                     metadata={"source": "aktu_knowledge_collection"},
                 )
 
-            # Step 2.65: Dataset meta-question short-circuit — "what kind of data
-            # do you have", "describe the database", "kya kya data hai".
-            # These can't be answered by RAG (no chunk summarises the dataset)
-            # and don't need SQL — return the templated overview built at
-            # startup from the cached dataset_context. Sub-50ms.
-            try:
-                from core.meta_detector import is_dataset_meta_question
-                from core.dataset_context import get_user_summary
-                # Check both raw and normalized — raw catches Hinglish
-                # ("kya kya data hai"), normalized catches English typos.
-                if is_dataset_meta_question(raw_query) or is_dataset_meta_question(query):
-                    summary = get_user_summary()
-                    if summary:
-                        if session_id:
-                            await self._save_to_session(
-                                session_id, query, summary,
-                                {"route_used": "DATASET_META"},
-                            )
-                        return QueryResponse(
-                            success=True,
-                            response=summary,
-                            route_used="DATASET_META",
-                            total_time_ms=(time.time() - t0) * 1000,
-                            metadata={"source": "dataset_overview"},
-                        )
-            except Exception as exc:
-                logger.debug("Dataset meta short-circuit failed (non-critical): %s", exc)
+            # (Step 3: removed DATASET_META regex short-circuit. The Query
+            # Planner now flags these queries with operation="meta" — handled
+            # inline via _handle_meta after the planner runs. The cache
+            # hits on the second identical ask so repeat asks stay fast.)
 
             # Step 2.7: Meta-question detection — explain previous answer or concepts
             try:
@@ -358,6 +363,27 @@ class Orchestrator:
 
             expanded_query = understood["expanded_query"]
             intent = understood["intent"]
+
+            # Step 2.85: Dataset-meta handler. The planner flags overview /
+            # "what data do you have" queries with operation="meta". The
+            # LLM writes a fresh, query-tailored answer using the cached
+            # dataset summary as ground truth — and the result is cached
+            # (via the standard cache.store at end of process_query, or
+            # the explicit store below) so repeat asks return instantly.
+            if understood.get("operation") == "meta":
+                meta_response = await self._handle_meta(query, understood, chat_history)
+                meta_response.total_time_ms = (time.time() - t0) * 1000
+                # NOTE: META is intentionally NOT auto-cached. The feedback
+                # endpoint promotes META responses into the cache only after
+                # a thumbs-up (rating >= 4) so a wrong first answer never
+                # gets replayed. See api/routes/feedback.py.
+                if session_id:
+                    await self._save_to_session(
+                        session_id, query, meta_response.response,
+                        {"route_used": meta_response.route_used,
+                         "total_time_ms": meta_response.total_time_ms},
+                    )
+                return meta_response
 
             # Step 2.9: Student lookup (driven by understander)
             if intent == "student_lookup":
@@ -421,8 +447,42 @@ class Orchestrator:
                 except Exception as exc:
                     logger.warning("Student lookup failed, falling through to router: %s", exc)
 
-            # Step 3: Route the query (use expanded_query for better routing)
-            route_result = await self.router.route(expanded_query, chat_history)
+            # Step 2.95: Clarification short-circuit. The planner flagged the
+            # query as ambiguous and gave us a question + 2-4 options. Return
+            # that directly — no SQL, no RAG, no router call. Step 5 will
+            # render the options as buttons on the frontend.
+            if understood.get("needs_clarification"):
+                clarify = self._clarification_response(query, understood, t0)
+                if session_id:
+                    await self._save_to_session(
+                        session_id, query, clarify.response, clarify.metadata,
+                    )
+                return clarify
+
+            # Step 3: Route. Prefer the planner's route when it's confident.
+            # Falls back to the router's LLM classifier only when the plan
+            # didn't pick a route (route=AUTO) or its confidence is below the
+            # floor — in those cases we also merge plan entities back into
+            # the router's filters so we don't lose the planner's work.
+            plan_route = understood.get("route", "AUTO")
+            plan_conf = float(understood.get("confidence") or 0.0)
+            if (
+                plan_route in ("SQL", "RAG", "HYBRID")
+                and plan_conf >= self._PLAN_ROUTE_CONFIDENCE_FLOOR
+            ):
+                route_result = self._route_from_plan(understood, expanded_query)
+                logger.info(
+                    "Route from plan: %s conf=%.2f filters=%s",
+                    plan_route, plan_conf, list(route_result.filters.keys()),
+                )
+            else:
+                route_result = await self.router.route(expanded_query, chat_history)
+                # Plan may have entities the router missed — merge without
+                # overwriting anything the router resolved explicitly.
+                for k, v in self._plan_entities_to_filters(
+                    understood.get("entities") or {}
+                ).items():
+                    route_result.filters.setdefault(k, v)
 
             # Step 4: Execute the appropriate pipeline (use expanded query for pipelines)
             route = route_result.route
@@ -514,6 +574,30 @@ class Orchestrator:
         # Normalize query (typos, Hinglish, abbreviations)
         query = normalize_query(query)
 
+        # Pre-cache garbage/empty guard (same as non-streaming path).
+        from core.query_understander import (
+            _too_short_or_punct, _looks_like_garbage, _clarify_plan,
+        )
+        if _too_short_or_punct(query) or _looks_like_garbage(query):
+            fallback_plan = _clarify_plan(
+                query,
+                question="I didn't quite catch what you meant. What would you like to know?",
+                options=[
+                    "Show me top students in a branch",
+                    "Average SGPA in a branch",
+                    "Tell me about a specific student",
+                    "How many students passed in a session",
+                ],
+                reason="Pre-cache guard (stream): empty/garbage query.",
+            )
+            clarify = self._clarification_response(query, fallback_plan, time.time())
+            yield clarify.response
+            if session_id:
+                await self._save_to_session(
+                    session_id, query, clarify.response, clarify.metadata,
+                )
+            return
+
         # Load session history
         if session_id and chat_history is None:
             raw_history = await self.session_manager.get_chat_history(session_id)
@@ -541,6 +625,18 @@ class Orchestrator:
                           "is_followup": False, "active_student_followup": False}
 
         expanded_query = understood["expanded_query"]
+
+        # Dataset-meta (streaming): LLM-driven answer; NOT auto-cached —
+        # feedback endpoint promotes the answer on thumbs-up only.
+        if understood.get("operation") == "meta":
+            meta_response = await self._handle_meta(query, understood, chat_history)
+            yield meta_response.response
+            if session_id:
+                await self._save_to_session(
+                    session_id, query, meta_response.response,
+                    {"route_used": meta_response.route_used},
+                )
+            return
 
         # Student lookup (non-streaming, returns full text)
         if understood["intent"] == "student_lookup":
@@ -581,8 +677,30 @@ class Orchestrator:
             except Exception as exc:
                 logger.warning("Student lookup stream failed: %s", exc)
 
-        # Route (non-streaming, fast)
-        route_result = await self.router.route(expanded_query, chat_history)
+        # Clarification short-circuit for streaming — yield as a single chunk.
+        if understood.get("needs_clarification"):
+            clarify = self._clarification_response(query, understood, time.time())
+            yield clarify.response
+            if session_id:
+                await self._save_to_session(
+                    session_id, query, clarify.response, clarify.metadata,
+                )
+            return
+
+        # Route — prefer plan when confident, fall back to router LLM call.
+        plan_route = understood.get("route", "AUTO")
+        plan_conf = float(understood.get("confidence") or 0.0)
+        if (
+            plan_route in ("SQL", "RAG", "HYBRID")
+            and plan_conf >= self._PLAN_ROUTE_CONFIDENCE_FLOOR
+        ):
+            route_result = self._route_from_plan(understood, expanded_query)
+        else:
+            route_result = await self.router.route(expanded_query, chat_history)
+            for k, v in self._plan_entities_to_filters(
+                understood.get("entities") or {}
+            ).items():
+                route_result.filters.setdefault(k, v)
 
         # Retrieve / execute (non-streaming)
         context, context_type = await self._build_stream_context(query, route_result)
@@ -621,6 +739,84 @@ class Orchestrator:
                 )
 
     # ── Route handlers ────────────────────────────────────────────────────────
+
+    async def _handle_meta(
+        self,
+        query: str,
+        plan: dict,
+        chat_history: list[dict] | None,
+    ) -> QueryResponse:
+        """
+        Answer a dataset-meta question ("what data do you have", "describe
+        the database") with the LLM grounded in the cached dataset summary.
+
+        Replaces the old DATASET_META regex short-circuit. Same source of
+        truth (dataset_context), but the LLM phrases the response to fit
+        the user's actual question — and the standard cache catches repeat
+        asks so subsequent identical queries return instantly.
+        """
+        from core.dataset_context import get_user_summary, get_dataset_context
+
+        summary = get_user_summary() or get_dataset_context()
+
+        # Build a short history block so followups like "and the sessions?"
+        # after "describe the database" still have context.
+        history_block = ""
+        if chat_history:
+            recent_lines = []
+            for msg in chat_history[-4:]:  # last 2 exchanges
+                role = msg.get("role", "?")
+                content = str(msg.get("content", ""))[:300]
+                recent_lines.append(f"{role.upper()}: {content}")
+            if recent_lines:
+                history_block = (
+                    "RECENT CONVERSATION (for resolving 'and X?' followups):\n"
+                    + "\n".join(recent_lines)
+                    + "\n\n"
+                )
+
+        system_prompt = (
+            "You are describing a student academic database to a user. "
+            "Use ONLY the dataset description provided below as your source "
+            "of truth — do not make up branches, sessions, or counts. "
+            "Format the answer in markdown. Keep it concise and adapt the "
+            "wording to the user's specific question. If the user just "
+            "wants an overview, you may use the description verbatim. "
+            "If the user's question is a followup to a previous turn, "
+            "answer the followup in context — don't repeat the full overview."
+        )
+        user_prompt = (
+            f"DATASET DESCRIPTION:\n{summary}\n\n"
+            f"{history_block}"
+            f"USER QUESTION: {query}\n\n"
+            "Write the answer:"
+        )
+
+        try:
+            response_text = await self.llm.generate(
+                prompt=user_prompt,
+                system=system_prompt,
+                temperature=0.3,
+                max_tokens=800,
+            )
+            response_text = (response_text or "").strip()
+        except Exception as exc:
+            logger.warning("Meta handler LLM failed: %s — falling back", exc)
+            response_text = ""
+
+        if not response_text:
+            # Last-resort fallback so the user always sees something.
+            response_text = summary or (
+                "I have a KCCITM student academic database, but the "
+                "summary isn't loaded yet. Try again in a moment."
+            )
+
+        return QueryResponse(
+            success=True,
+            response=response_text,
+            route_used="META",
+            metadata={"source": "planner_meta"},
+        )
 
     async def _handle_sql(
         self,
@@ -788,6 +984,114 @@ class Orchestrator:
             logger.warning("OpenAI SQL fallback failed: %s", exc)
 
         return None
+
+    # Confidence threshold below which we don't trust the plan's route and
+    # fall back to the router's LLM classification. Aligns with the same
+    # threshold used by the escalation logic in Step 6.
+    _PLAN_ROUTE_CONFIDENCE_FLOOR = 0.7
+
+    def _plan_entities_to_filters(self, entities: dict) -> dict:
+        """Map planner entities → SQL pipeline filter keys."""
+        if not entities:
+            return {}
+        f: dict = {}
+        if entities.get("branch"):   f["branch"]   = entities["branch"]
+        if entities.get("course"):   f["course"]   = entities["course"]
+        if entities.get("session"):  f["session"]  = entities["session"]
+        if entities.get("batch"):    f["batch"]    = entities["batch"]
+        if entities.get("gender"):   f["gender"]   = entities["gender"]
+        if entities.get("semester") is not None:
+            f["semester"] = entities["semester"]
+        if entities.get("subject"):
+            # Plan emits subject *name* (e.g. "DBMS") — sql_pipeline
+            # LIKE-matches against subject_marks.subject_name.
+            f["subject_name"] = entities["subject"]
+        return f
+
+    def _route_from_plan(self, plan: dict, query: str) -> RouteResult:
+        """
+        Build a RouteResult directly from the Query Planner's output —
+        skips the router's LLM call. Still applies the cheap deterministic
+        enrichments (branch fuzzy match, subject_code regex) so we don't
+        lose router's robustness on entity completeness.
+        """
+        filters = self._plan_entities_to_filters(plan.get("entities") or {})
+
+        if plan.get("student_name"):
+            filters["name"] = plan["student_name"]
+        if plan.get("roll_no"):
+            filters["roll_no"] = plan["roll_no"]
+
+        try:
+            from core.dataset_context import match_branch
+            resolved = match_branch(filters.get("branch") or query, query)
+            if resolved:
+                filters["branch"] = resolved
+        except Exception:
+            pass
+
+        # Subject code regex (e.g. "KCS503") — the planner emits the
+        # subject *name* but not the code. Cheap regex.
+        if not filters.get("subject_code"):
+            m = re.search(r"\b([A-Z]{2,4}\d{3,4}[A-Z]?)\b", query.upper())
+            if m:
+                filters["subject_code"] = m.group(1)
+
+        entities = plan.get("entities") or {}
+        return RouteResult(
+            route=plan.get("route", "RAG"),
+            needs_filter=bool(filters),
+            entities=[str(v) for v in filters.values()][:5],
+            filters=filters,
+            intent=plan.get("expanded_query")
+                   or plan.get("reasoning")
+                   or query,
+            complexity="moderate",
+            confidence=float(plan.get("confidence", 0.8)),
+            # Forward the planner's structured operation/aggregation so
+            # sql_pipeline doesn't have to re-derive them from text.
+            operation=str(plan.get("operation") or ""),
+            aggregation=str(entities.get("aggregation") or ""),
+            needs_templates=bool(plan.get("needs_templates", False)),
+        )
+
+    def _clarification_response(
+        self, query: str, plan: dict, t0: float,
+    ) -> "QueryResponse":
+        """
+        Build a QueryResponse asking the user to disambiguate. The visible
+        text contains the question + numbered options for chat display;
+        metadata carries the structured fields the Step 5 frontend will
+        render as clickable buttons.
+        """
+        question = (
+            plan.get("clarification_question")
+            or "Could you clarify what you mean?"
+        )
+        options = plan.get("clarification_options") or []
+
+        lines = [question]
+        if options:
+            lines.append("")
+            for i, opt in enumerate(options, start=1):
+                lines.append(f"{i}. {opt}")
+            lines.append("")
+            lines.append("Reply with the number or rephrase your question.")
+        text = "\n".join(lines)
+
+        return QueryResponse(
+            success=True,
+            response=text,
+            route_used="CLARIFICATION",
+            total_time_ms=(time.time() - t0) * 1000,
+            metadata={
+                "needs_clarification": True,
+                "clarification_question": question,
+                "clarification_options": options,
+                "original_query": query,
+                "ambiguities": plan.get("ambiguities", []),
+            },
+        )
 
     _AGG_KEYWORDS = (
         "how many", "count", "total", "number of",

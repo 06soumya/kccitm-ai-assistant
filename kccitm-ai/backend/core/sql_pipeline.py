@@ -184,65 +184,11 @@ When users mention abbreviated subject names, expand them before searching:
 - BEE, electrical → subject_name LIKE '%%Electrical Engineering%%'
 """
 
-# ── Subject detection map (keyword → LIKE pattern for subject_marks.subject_name) ──
-_SUBJECT_DETECT: dict[str, str] = {
-    "dbms": "%%Database Management%%",
-    "database management": "%%Database Management%%",
-    "dsa": "%%Data Structure%%",
-    "data structure": "%%Data Structure%%",
-    "os ": "%%Operating System%%",
-    "operating system": "%%Operating System%%",
-    "cn ": "%%Computer Network%%",
-    "computer network": "%%Computer Network%%",
-    "coa": "%%Computer Architecture%%",
-    "computer architecture": "%%Computer Architecture%%",
-    "oop": "%%Object Oriented%%",
-    "oops": "%%Object Oriented%%",
-    "pps": "%%Programming for Problem%%",
-    "math 1": "%%Mathematics-I%%",
-    "math-1": "%%Mathematics-I%%",
-    "math 2": "%%Mathematics-II%%",
-    "math-2": "%%Mathematics-II%%",
-    "math 3": "%%Mathematics-III%%",
-    "math-3": "%%Mathematics-III%%",
-    "math 4": "%%Mathematics-IV%%",
-    "math-4": "%%Mathematics-IV%%",
-    "mathematics 1": "%%Mathematics-I%%",
-    "mathematics 2": "%%Mathematics-II%%",
-    "mathematics 3": "%%Mathematics-III%%",
-    "mathematics 4": "%%Mathematics-IV%%",
-    "mathematics-i": "%%Mathematics-I%%",
-    "mathematics-ii": "%%Mathematics-II%%",
-    "mathematics-iii": "%%Mathematics-III%%",
-    "mathematics-iv": "%%Mathematics-IV%%",
-    "maths": "%%Mathematics%%",
-    "math": "%%Mathematics%%",
-    "physics": "%%Physics%%",
-    "chemistry": "%%Chemistry%%",
-    "evs": "%%Environment%%",
-    "environment": "%%Environment%%",
-    "daa": "%%Design and Analysis%%",
-    "algorithm": "%%Algorithm%%",
-    "software engineering": "%%Software Engineering%%",
-    "artificial intelligence": "%%Artificial Intelligence%%",
-    "machine learning": "%%Machine Learning%%",
-    "toc": "%%Theory of Automata%%",
-    "automata": "%%Theory of Automata%%",
-    "compiler": "%%Compiler%%",
-    "constitution": "%%Constitution%%",
-    "graphics": "%%Engineering Graphics%%",
-    "electrical": "%%Electrical Engineering%%",
-    "discrete": "%%Discrete%%",
-    "probability": "%%Probability%%",
-    "numerical": "%%Numerical%%",
-    "communication": "%%Communication%%",
-    "digital": "%%Digital%%",
-    "microprocessor": "%%Microprocessor%%",
-    "web": "%%Web%%",
-    "cloud": "%%Cloud%%",
-    "cyber": "%%Cyber%%",
-    "network security": "%%Network Security%%",
-}
+# ── (Step 4: _SUBJECT_DETECT keyword map removed. The LLM matches subjects
+# via `subject_name LIKE '%<keyword>%'` directly from schema. When the
+# planner says needs_templates=True or the validator rejects the first SQL,
+# core.sql_templates supplies canonical SQL shapes — see _build_user_prompt's
+# templates_block parameter.)
 
 # ── LogicCat-only extended prompt (appended only when LOGICCAT_MODE=True) ────
 
@@ -831,18 +777,59 @@ class SQLPipeline:
 
         Never raises — all error paths return SQLResult(success=False, error="...").
         """
-        # IMPROVEMENT 2: Query decomposition — get hints for complex queries
-        steps = await self.decompose_query(query)
-        decomp_hint = steps[0].get("hint", "") if steps else ""
-
         # UPGRADE 1: Schema linking
         linked = schema_link(query)
         linked_schema_text = _build_linked_schema(linked)
 
-        # Step 1: Generate SQL with chain-of-thought + decomposition hint
+        # Step 1a: First SQL gen — schema + few-shots + planner directives,
+        # NO templates. The LLM tries from scratch. (Step 4 of the accuracy
+        # refactor: decompose_query / pattern hints removed — the planner's
+        # operation/aggregation signal already steers via Gap A directives.)
         generated = await self._generate_sql(
-            query, route_result, linked_schema_text, hint=decomp_hint
+            query, route_result, linked_schema_text, templates_block=""
         )
+
+        # Step 1b: Decide whether to retry with templates injected.
+        # Trigger conditions:
+        #   - First call failed outright (no SQL produced)
+        #   - Validator rejects the SQL (uses wrong table / syntax error)
+        #   - Planner pre-judged the query as template-worthy (needs_templates)
+        retry_with_templates = False
+        if not generated.success:
+            retry_with_templates = True
+        elif getattr(route_result, "needs_templates", False):
+            retry_with_templates = True
+        else:
+            _val_err = self._validate_sql(generated.sql)
+            if _val_err:
+                retry_with_templates = True
+
+        if retry_with_templates:
+            try:
+                from core.sql_templates import (
+                    get_relevant_templates, format_for_prompt,
+                )
+                relevant = get_relevant_templates(
+                    query,
+                    operation=getattr(route_result, "operation", ""),
+                    aggregation=getattr(route_result, "aggregation", ""),
+                    top_k=3,
+                )
+                templates_block = format_for_prompt(relevant)
+                if templates_block:
+                    logger.info(
+                        "Retrying SQL gen with %d reference templates (%s)",
+                        len(relevant), [t["name"] for t in relevant],
+                    )
+                    retry_result = await self._generate_sql(
+                        query, route_result, linked_schema_text,
+                        templates_block=templates_block,
+                    )
+                    if retry_result.success:
+                        generated = retry_result
+            except Exception as exc:
+                logger.debug("Template retry skipped (%s)", exc)
+
         if not generated.success:
             return generated
         generated.schema_linked = linked
@@ -902,6 +889,7 @@ class SQLPipeline:
         previous_thinking: Optional[str] = None,
         temperature: float = 0.05,
         hint: str = "",
+        templates_block: str = "",
     ) -> SQLResult:
         """Use LLM to generate SQL from natural language with chain-of-thought."""
         system_prompt = await self._get_system_prompt(linked_schema_text)
@@ -914,7 +902,9 @@ class SQLPipeline:
                 previous_thinking=previous_thinking or "No reasoning captured",
             )
         else:
-            user_prompt = self._build_user_prompt(query, route_result, hint=hint)
+            user_prompt = self._build_user_prompt(
+                query, route_result, hint=hint, templates_block=templates_block,
+            )
 
             # Dynamic few-shot retrieval — find similar verified examples
             try:
@@ -966,107 +956,12 @@ class SQLPipeline:
         except Exception as exc:
             return SQLResult(success=False, error=f"SQL retry generation failed: {exc}")
 
-    async def decompose_query(self, query: str) -> list[dict]:
-        """
-        IMPROVEMENT 2: Break complex queries into executable sub-steps.
-        Returns a list of step dicts with 'question' and optional 'hint'.
-        """
-        q = query.lower()
-
-        # Pattern: "compare X and Y" or "X vs Y"
-        if any(w in q for w in ["compare", " vs ", "versus", "difference between"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use GROUP BY to compare groups side by side. For batch comparison: "
-                "CASE WHEN roll_no LIKE '21%' THEN '2021' WHEN roll_no LIKE '22%' "
-                "THEN '2022' END as batch. Return both groups in ONE query using "
-                "GROUP BY, not two separate queries."
-            )}]
-
-        # Pattern: "percentage of X who Y"
-        if "percentage" in q or "percent" in q or "rate" in q:
-            return [{"step": 1, "question": query, "hint": (
-                "Use ROUND(SUM(CASE WHEN condition THEN 1 ELSE 0 END) * 100.0 / "
-                "COUNT(*), 2) for percentage. Always multiply by 100.0 (not 100) "
-                "for decimal division. For pass rate: result_status IN "
-                "('PASS','PCP','PWG') or LIKE 'CP(% 0)'. For fail: NOT in those."
-            )}]
-
-        # Pattern: "improved/dropped between"
-        if any(w in q for w in ["improved", "dropped", "increased", "decreased", "trend", "change", "growth"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use self-join: SELECT s.name, sr1.sgpa as sem1_sgpa, sr2.sgpa as "
-                "sem2_sgpa, ROUND(sr2.sgpa - sr1.sgpa, 2) as change FROM students s "
-                "JOIN semester_results sr1 ON s.roll_no = sr1.roll_no AND sr1.semester = X "
-                "JOIN semester_results sr2 ON s.roll_no = sr2.roll_no AND sr2.semester = Y. "
-                "For 'improved': WHERE sr2.sgpa > sr1.sgpa."
-            )}]
-
-        # Pattern: "which X has highest/lowest Y"
-        if any(w in q for w in ["which batch", "which branch", "which semester", "which subject"]) and \
-           any(w in q for w in ["highest", "lowest", "best", "worst", "most", "least", "maximum", "minimum"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use GROUP BY + ORDER BY + LIMIT 1. For 'lowest/worst/least' use ASC. "
-                "Pattern: SELECT group_col, AGG(val) as metric FROM tables GROUP BY "
-                "group_col ORDER BY metric DESC LIMIT 1."
-            )}]
-
-        # Pattern: "students who [condition across multiple rows]"
-        if ("students who" in q or "students that" in q) and \
-           any(w in q for w in ["all semester", "every semester", "never failed", "always passed"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use GROUP BY + HAVING. Pattern: SELECT s.name, s.roll_no FROM "
-                "students s JOIN semester_results sr ON s.roll_no = sr.roll_no "
-                "GROUP BY s.roll_no, s.name HAVING SUM(CASE WHEN sr.result_status "
-                "NOT IN ('PASS','PCP','PWG') AND sr.result_status NOT LIKE "
-                "'CP(% 0)' THEN 1 ELSE 0 END) = 0."
-            )}]
-
-        # Pattern: "subjects where X% got grade Y"
-        if "subjects" in q and ("grade" in q or "%" in q or "percent" in q):
-            return [{"step": 1, "question": query, "hint": (
-                "GROUP BY sm.subject_name with HAVING clause "
-                "on the percentage. Use SUM(CASE WHEN sm.grade = 'F' THEN 1 "
-                "ELSE 0 END) * 100.0 / COUNT(*)."
-            )}]
-
-        # Pattern: negation ("never", "not", "no backlogs", "did not")
-        if any(w in q for w in ["never failed", "not fail", "no backlog", "0 backlog",
-                                 "did not fail", "nobody failed", "no one failed",
-                                 "zero backlog", "never got f"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use NOT IN subquery: WHERE roll_no NOT IN (SELECT DISTINCT roll_no "
-                "FROM subject_marks WHERE grade = 'F'). For semester-level: use "
-                "semester_results.result_status with HAVING SUM(CASE non-pass) = 0."
-            )}]
-
-        # Pattern: "per branch" / "per semester" / "each branch"
-        if any(w in q for w in ["per branch", "each branch", "per semester", "each semester",
-                                 "by branch", "by semester", "every branch"]):
-            return [{"step": 1, "question": query, "hint": (
-                "GROUP BY the grouping column (branch/semester) + student, ORDER BY "
-                "group + metric. For 'topper per branch': GROUP BY roll_no, name, branch "
-                "ORDER BY branch, cgpa DESC. Do NOT use window functions."
-            )}]
-
-        # Pattern: "trend" / "across semesters"
-        if any(w in q for w in ["trend", "across semester", "across all semester",
-                                 "per semester", "semester wise", "semesterwise"]):
-            return [{"step": 1, "question": query, "hint": (
-                "GROUP BY semester, ORDER BY semester. Include AVG/COUNT as needed. "
-                "For batch filter add WHERE roll_no LIKE 'XX%'."
-            )}]
-
-        # Pattern: "of those who" / "among those" (nested percentage)
-        if any(w in q for w in ["of those who", "among those", "also failed",
-                                 "that also", "who also"]):
-            return [{"step": 1, "question": query, "hint": (
-                "Use self-join: sr1 JOIN sr2 ON roll_no. First subquery counts "
-                "students matching BOTH conditions, second counts matching only "
-                "the first condition. Divide for percentage."
-            )}]
-
-        # Simple query — no decomposition needed
-        return [{"step": 1, "question": query}]
+    # (Step 4: decompose_query() removed. The 7 regex-driven pattern hints
+    # — "compare X and Y", "percentage of", "improved/dropped",
+    # "which X has highest", "students who never failed", "subjects where
+    # X% got grade Y", "of those who" — have been consolidated into
+    # core.sql_templates and are consulted by run() when the planner says
+    # needs_templates=True or the first SQL attempt fails validation.)
 
     def _validate_cot_quality(self, question: str, thinking: str, sql: str) -> tuple[bool, str]:
         """
@@ -1158,24 +1053,52 @@ class SQLPipeline:
         from core.dataset_context import get_dataset_context
         return f"{get_dataset_context()}\n\n{prompt}"
 
-    @staticmethod
-    def _detect_subject(query: str) -> str | None:
-        """Detect if query is about a specific subject. Returns LIKE pattern or None."""
-        q = query.lower()
-        # Check longer patterns first to avoid partial matches
-        for keyword, pattern in sorted(_SUBJECT_DETECT.items(), key=lambda x: -len(x[0])):
-            if keyword in q:
-                return pattern
-        return None
+    # (Step 4: _detect_subject() removed. The LLM resolves subject names
+    # itself via `subject_name LIKE '%<token>%'` in subject_marks — the
+    # schema is already injected in the system prompt.)
 
     def _build_user_prompt(
-        self, query: str, route_result: RouteResult, hint: str = "",
+        self,
+        query: str,
+        route_result: RouteResult,
+        hint: str = "",
+        templates_block: str = "",
     ) -> str:
         """Build user prompt combining the question with router-extracted context."""
         parts = [f"Question: {query}"]
 
         if hint:
             parts.append(f"Hint: {hint}")
+
+        # Operation hint propagated from the Query Planner. The planner
+        # already reasoned about whether this is an aggregate, list,
+        # comparison etc. — pass that decision as an explicit instruction
+        # so the small LLM doesn't have to re-classify from the query text
+        # (which is where the "returns list when asked for AVG" bug came from).
+        op = (route_result.operation or "").lower()
+        agg = (route_result.aggregation or "").lower()
+        if op or agg:
+            op_hints = {
+                "aggregate": "This is an AGGREGATE query — your SELECT must return computed values, not raw rows. Use a single GROUP BY (or none) so the result is one row per group.",
+                "list":      "This is a LIST query — return raw rows. Do NOT aggregate. Apply ORDER BY + LIMIT for top-N / bottom-N requests.",
+                "lookup":    "This is a LOOKUP query — return ALL relevant fields for the matched record(s); do not aggregate.",
+                "comparison":"This is a COMPARISON query — GROUP BY the comparison dimension (branch/batch/gender/etc.) so each group is one row.",
+            }
+            agg_hints = {
+                "avg":       "Use AVG(...) in SELECT. Result is a single number per group.",
+                "sum":       "Use SUM(...) in SELECT.",
+                "count":     "Use COUNT(...) in SELECT — returns a single number.",
+                "min":       "Use MIN(...) in SELECT.",
+                "max":       "Use MAX(...) in SELECT.",
+                "pass_rate": "Compute pass rate as ROUND(SUM(CASE WHEN result_status='PASS' THEN 1 ELSE 0 END) / COUNT(*) * 100, 2).",
+            }
+            lines: list[str] = []
+            if op in op_hints:
+                lines.append(op_hints[op])
+            if agg in agg_hints:
+                lines.append(agg_hints[agg])
+            if lines:
+                parts.append("Planner directives:\n- " + "\n- ".join(lines))
 
         if route_result.intent:
             parts.append(f"Intent: {route_result.intent}")
@@ -1192,39 +1115,13 @@ class SQLPipeline:
         if route_result.entities:
             parts.append(f"Entities: {', '.join(str(e) for e in route_result.entities)}")
 
-        # Detect subject queries and inject forced SQL template
-        subject_like = self._detect_subject(query)
-        if subject_like:
-            # Extract batch and semester from query
-            q_lower = query.lower()
-            batch_filter = ""
-            import re as _re
-            batch_match = _re.search(r"batch\s*(\d{4})", q_lower)
-            if batch_match:
-                batch_prefix = batch_match.group(1)[2:]  # 2024 → 24
-                batch_filter = f" AND sm.roll_no LIKE '{batch_prefix}%%'"
-            sem_filter = ""
-            sem_match = _re.search(r"semester\s*(\d+)", q_lower) or _re.search(r"\bsem\s*(\d+)", q_lower)
-            if sem_match:
-                sem_filter = f" AND sm.semester = {sem_match.group(1)}"
-            # Extract LIMIT from query
-            limit_match = _re.search(r"(?:top|list|first)\s*(\d+)", q_lower)
-            limit_n = limit_match.group(1) if limit_match else "10"
-
-            parts.append(f"""
-MANDATORY: This is a SUBJECT query. You MUST use this exact SQL template:
-SELECT s.name, sm.roll_no, s.branch, sm.subject_code, sm.subject_name,
-       sm.internal_marks, sm.external_marks,
-       (COALESCE(sm.internal_marks,0) + COALESCE(sm.external_marks,0)) AS total_marks,
-       sm.grade
-FROM subject_marks sm
-JOIN students s ON sm.roll_no = s.roll_no
-WHERE sm.subject_name LIKE '{subject_like}'{batch_filter}{sem_filter}
-GROUP BY sm.roll_no, s.name, s.branch, sm.subject_code, sm.subject_name, sm.internal_marks, sm.external_marks, sm.grade
-ORDER BY total_marks DESC
-LIMIT {limit_n}
-
-Do NOT use semester_results for subject queries. Do NOT remove any columns from this template.""")
+        # Optional reference templates — appended only when the planner
+        # asked for them or the first SQL attempt failed validation. The
+        # LLM is told to consult and adapt, NOT to copy blindly. This
+        # replaces the old MANDATORY subject template + 7 regex-driven
+        # pattern hints with one consultation library.
+        if templates_block:
+            parts.append(templates_block)
 
         return "\n".join(parts)
 
