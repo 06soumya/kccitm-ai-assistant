@@ -61,7 +61,11 @@ class MultiQueryExpander:
             List of variant query strings (does NOT include the original).
             Returns [] on failure — pipeline continues with just original query.
         """
-        prompt = MULTI_QUERY_PROMPT.format(query=query)
+        # Inject dataset context so variants use real branch names / sessions
+        # — e.g. CSE expanded becomes "COMPUTER SCIENCE AND ENGINEERING", not
+        # just "Computer Science", which dramatically improves BM25 overlap.
+        from core.dataset_context import get_dataset_context
+        prompt = f"{get_dataset_context()}\n\n{MULTI_QUERY_PROMPT.format(query=query)}"
         try:
             response = await self.llm.generate(
                 prompt=prompt,
@@ -111,31 +115,41 @@ class MultiQueryExpander:
         result_lists: list[list[dict]],
         k: int = 60,
         id_field: str = "chunk_id",
+        weights: list[float] | None = None,
     ) -> list[dict]:
         """
         Merge multiple ranked result lists using Reciprocal Rank Fusion.
 
-        RRF score for document d = Σ 1 / (k + rank(d))
+        RRF score for document d = Σ w_i * 1 / (k + rank(d))
         Chunks appearing across multiple lists get boosted scores.
 
         Args:
             result_lists: List of search result lists, each [{chunk_id, text, metadata, score}, ...]
             k: RRF smoothing parameter (standard default: 60)
             id_field: Field used for deduplication
+            weights: Per-list weight multipliers. Defaults to uniform (1.0 each).
+                     Pass [2.0, 1.0, 1.0, 1.0] to bias toward the original query
+                     over variants — prevents exact-match winners from being
+                     buried by chunks that mediocrely match all variants.
 
         Returns:
             Merged, deduplicated list sorted by RRF score descending.
             Each chunk gets a 'rrf_score' field.
         """
+        if weights is None:
+            weights = [1.0] * len(result_lists)
+        elif len(weights) != len(result_lists):
+            weights = (list(weights) + [1.0] * len(result_lists))[: len(result_lists)]
+
         scores: dict[str, float] = defaultdict(float)
         docs: dict[str, dict] = {}
 
-        for result_list in result_lists:
+        for w, result_list in zip(weights, result_lists):
             for rank, doc in enumerate(result_list):
                 doc_id = doc.get(id_field)
                 if not doc_id:
                     continue
-                scores[doc_id] += 1.0 / (k + rank + 1)
+                scores[doc_id] += w * (1.0 / (k + rank + 1))
                 # Keep the doc with the highest individual score
                 if doc_id not in docs or doc.get("score", 0) > docs[doc_id].get("score", 0):
                     docs[doc_id] = doc

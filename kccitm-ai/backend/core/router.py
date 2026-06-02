@@ -235,7 +235,14 @@ class QueryRouter:
 
         In Phase 9 this will load the active version from prompts.db.
         For now, returns the static constant.
+
+        Prepends the cached dataset context so the LLM knows what the full
+        dataset looks like before classifying — meta-questions like "what
+        kind of data do you have" can then be routed to SQL instead of RAG.
         """
+        from core.dataset_context import get_dataset_context
+
+        base = ROUTER_SYSTEM_PROMPT
         if self.prompt_store is not None:
             try:
                 from db.sqlite_client import fetch_one
@@ -247,10 +254,10 @@ class QueryRouter:
                     ("router", "system"),
                 )
                 if row and row.get("content"):
-                    return row["content"]
+                    base = row["content"]
             except Exception as exc:
                 logger.warning("Could not load router prompt from DB: %s", exc)
-        return ROUTER_SYSTEM_PROMPT
+        return f"{get_dataset_context()}\n\n{base}"
 
     def _build_user_prompt(
         self,
@@ -312,6 +319,27 @@ class QueryRouter:
 
         raw_filters: dict = data.get("filters") or {}
         filters = self._validate_filters(raw_filters)
+
+        # Fuzzy-resolve branch against the real dataset list. The query is
+        # passed in so multi-word branch names (e.g. "CSE Data Science") whose
+        # suffix tokens didn't end up in `filters.branch` can still steer the
+        # match toward the correct sub-branch. Also runs when the LLM didn't
+        # extract a branch but the query clearly mentions one.
+        try:
+            from core.dataset_context import match_branch
+            current = filters.get("branch")
+            resolved = match_branch(current or original_query, original_query)
+            if resolved:
+                if current and resolved != current:
+                    logger.info(
+                        "Router: resolved branch '%s' -> '%s' via query context",
+                        current, resolved,
+                    )
+                elif not current:
+                    logger.info("Router: inferred branch '%s' from query", resolved)
+                filters["branch"] = resolved
+        except Exception as exc:
+            logger.debug("Branch fuzzy match skipped: %s", exc)
 
         entities: list[str] = [
             str(e) for e in (data.get("entities") or []) if e

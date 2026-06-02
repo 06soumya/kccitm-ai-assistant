@@ -1151,7 +1151,12 @@ class SQLPipeline:
         if settings.LOGICCAT_MODE:
             prompt += _LOGICCAT_EXTENDED_PROMPT
 
-        return prompt
+        # Prepend dataset context so the LLM knows the exact branch / session /
+        # semester values present in the data — prevents WHERE clauses that
+        # use abbreviated or guessed values (e.g. 'CSE' when the real value
+        # is 'COMPUTER SCIENCE AND ENGINEERING').
+        from core.dataset_context import get_dataset_context
+        return f"{get_dataset_context()}\n\n{prompt}"
 
     @staticmethod
     def _detect_subject(query: str) -> str | None:
@@ -1335,7 +1340,10 @@ Do NOT use semester_results for subject queries. Do NOT remove any columns from 
         Ask the LLM to check if generated SQL actually answers the question.
         One extra LLM call (~3-5 seconds) but catches wrong LIMIT, wrong table, missing columns.
         """
-        verify_prompt = f"""Check if this SQL correctly answers the question. Be strict.
+        from core.dataset_context import get_dataset_context
+        verify_prompt = f"""{get_dataset_context()}
+
+Check if this SQL correctly answers the question. Be strict.
 
 QUESTION: {question}
 SQL: {sql}

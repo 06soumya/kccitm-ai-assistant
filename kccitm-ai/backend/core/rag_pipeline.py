@@ -42,7 +42,7 @@ ABSOLUTE RULES — BREAK ANY OF THESE AND THE ANSWER IS WRONG:
 
 2. If the context says subject_code KCS503 has subject_name "Design and Analysis of Algorithm", use THAT name. Never substitute a different subject name.
 
-3. If the context doesn't have enough data to answer, say: "I don't have sufficient data for this query."
+3. ALWAYS answer with whatever relevant data is present in the context. If the context has SOME relevant records (even if not a perfect match), answer from those records and add "(Based on N matching records)" — never refuse on partial data. Only say "I don't have sufficient data for this query" if the context is COMPLETELY EMPTY or the chunks have ZERO relevance to the query (e.g., asked about SGPA but chunks contain only subject definitions).
 
 4. NEVER mention students or data points that aren't explicitly in the context provided.
 
@@ -198,13 +198,18 @@ class RAGPipeline:
             use_optimizations = settings.RAG_USE_OPTIMIZATIONS
 
         filters = self._extract_filters(route_result)
-        k = self._k_for_filters(route_result)
 
         if not use_optimizations:
+            k = self._k_for_filters(route_result)
             embedding = await self.llm.embed(query)
-            return self.milvus.hybrid_search(
+            chunks = self.milvus.hybrid_search(
                 query, embedding, k=k, filters=filters
             )
+            if not chunks and filters:
+                chunks = self.milvus.hybrid_search(
+                    query, embedding, k=k, filters=None
+                )
+            return chunks
 
         # Optimized: HyDE + multi-query + RRF + re-rank + compress
         hyde_task = asyncio.create_task(self.hyde.generate_and_embed(query))
@@ -216,13 +221,25 @@ class RAGPipeline:
         if variants:
             all_embeddings.extend(await self.llm.embed_batch(variants))
 
+        per_variant_k, cutoff = self._k_for_query(query, route_result)
         all_results = []
         for q_text, q_emb in zip(all_queries, all_embeddings):
-            results = self.milvus.hybrid_search(q_text, q_emb, k=20, filters=filters)
+            results = self.milvus.hybrid_search(q_text, q_emb, k=per_variant_k, filters=filters)
             all_results.append(results)
 
-        merged = MultiQueryExpander.reciprocal_rank_fusion(all_results)
-        reranked = self.reranker.rerank(query, merged[:30])
+        weights = [2.0] + [1.0] * (len(all_results) - 1)
+        merged = MultiQueryExpander.reciprocal_rank_fusion(all_results, weights=weights)
+
+        # Filter retry for HYBRID retrieve_only path too
+        if not merged and filters:
+            logger.info("Filtered retrieval empty (retrieve_only) — retrying without filters")
+            all_results = []
+            for q_text, q_emb in zip(all_queries, all_embeddings):
+                results = self.milvus.hybrid_search(q_text, q_emb, k=per_variant_k, filters=None)
+                all_results.append(results)
+            merged = MultiQueryExpander.reciprocal_rank_fusion(all_results, weights=weights)
+
+        reranked = self.reranker.rerank(query, merged[:cutoff])
         compressed = await self.compressor.compress(query, reranked)
         return compressed
 
@@ -252,15 +269,30 @@ class RAGPipeline:
             variant_embeddings = await self.llm.embed_batch(variants)
             all_embeddings.extend(variant_embeddings)
 
-        # Step 3: Milvus hybrid search for each query variant (k=20 per variant)
+        # Step 3: Milvus hybrid search for each query variant
+        per_variant_k, cutoff = self._k_for_query(query, route_result)
         all_results: list[list[dict]] = []
         for q_text, q_emb in zip(all_queries, all_embeddings):
-            results = self.milvus.hybrid_search(q_text, q_emb, k=20, filters=filters)
+            results = self.milvus.hybrid_search(q_text, q_emb, k=per_variant_k, filters=filters)
             all_results.append(results)
 
-        # Step 4: Merge via RRF
-        merged = MultiQueryExpander.reciprocal_rank_fusion(all_results)
-        candidates = merged[:30]
+        # Step 4: Merge via RRF (original query weighted higher than variants)
+        weights = [2.0] + [1.0] * (len(all_results) - 1)
+        merged = MultiQueryExpander.reciprocal_rank_fusion(all_results, weights=weights)
+        candidates = merged[:cutoff]
+
+        # Filter retry: if filtered retrieval found nothing, the filter may not
+        # match real metadata values (e.g. "CSE Data Science" vs the stored
+        # "COMPUTER SCIENCE AND ENGINEERING(DATA SCIENCE)"). Retry unfiltered
+        # rather than refusing — reranker will prioritize semantic match.
+        if not candidates and filters:
+            logger.info("Filtered retrieval empty — retrying without filters (filters=%s)", filters)
+            all_results = []
+            for q_text, q_emb in zip(all_queries, all_embeddings):
+                results = self.milvus.hybrid_search(q_text, q_emb, k=per_variant_k, filters=None)
+                all_results.append(results)
+            merged = MultiQueryExpander.reciprocal_rank_fusion(all_results, weights=weights)
+            candidates = merged[:cutoff]
 
         if not candidates:
             return RAGResult(
@@ -301,6 +333,13 @@ class RAGPipeline:
         chunks = self.milvus.hybrid_search(
             query, query_embedding, k=k, filters=filters
         )
+
+        # Filter retry: stale/wrong filter shouldn't cause refusal
+        if not chunks and filters:
+            logger.info("Filtered retrieval empty (basic) — retrying without filters")
+            chunks = self.milvus.hybrid_search(
+                query, query_embedding, k=k, filters=None
+            )
 
         if not chunks:
             return RAGResult(
@@ -345,6 +384,32 @@ class RAGPipeline:
             return 30  # Enough to cover all semesters + subjects
         return settings.RAG_TOP_K
 
+    _LIST_KEYWORDS = (
+        "list ", "all ", "every ", "top ", "bottom ",
+        "average", "mean ", "count", "how many", "compare",
+        "highest", "lowest", "rank", "best", "worst",
+    )
+
+    def _k_for_query(self, query: str, route_result: RouteResult) -> tuple[int, int]:
+        """
+        Decide per-variant k (passed to Milvus) and the RRF cutoff.
+
+        For aggregation/list/comparison queries we need a wider net so the
+        reranker has enough candidates to find the right cohort. For specific
+        student lookups, the default is fine.
+
+        Returns (per_variant_k, rrf_cutoff).
+        """
+        f = route_result.filters or {}
+        # Specific student lookup — defaults are sufficient
+        if f.get("name") or f.get("roll_no"):
+            return (30, 50)
+        q = (query or "").lower()
+        intent = (route_result.intent or "").lower()
+        if any(kw in q or kw in intent for kw in self._LIST_KEYWORDS):
+            return (50, 80)
+        return (20, 30)
+
     def _assemble_context(
         self,
         chunks: list[dict],
@@ -380,7 +445,17 @@ class RAGPipeline:
         return "".join(parts)
 
     async def _get_response_prompt(self) -> str:
-        """Load response generator prompt from prompts.db, fallback to hardcoded."""
+        """
+        Load response generator prompt from prompts.db, fallback to hardcoded.
+
+        Prepends the cached dataset context so the LLM always knows the
+        retrieved chunks are a SAMPLE of a much larger dataset (it sees ~15
+        records out of thousands), preventing narrow / over-confident answers
+        that describe only the chunks visible in the prompt.
+        """
+        from core.dataset_context import get_dataset_context
+
+        base = RESPONSE_GENERATOR_PROMPT
         try:
             from db.sqlite_client import fetch_one
             row = await fetch_one(
@@ -390,10 +465,23 @@ class RAGPipeline:
                 ("response_generator", "system"),
             )
             if row and row.get("content"):
-                return row["content"]
+                base = row["content"]
         except Exception as exc:
             logger.warning("Could not load response_generator prompt from DB: %s", exc)
-        return RESPONSE_GENERATOR_PROMPT
+
+        framing = (
+            "IMPORTANT — SAMPLE FRAMING:\n"
+            "The retrieved chunks below are a SMALL SAMPLE of the full dataset "
+            "(typically 7-15 records out of thousands), selected by semantic "
+            "search. They are NOT the entire database.\n"
+            "- For specific student questions: answer from the chunks directly.\n"
+            "- For descriptive/exploratory questions ('what kind of data...', "
+            "'tell me about your data', overview questions): use the DATASET "
+            "context above to describe the full corpus, NOT just the sampled "
+            "chunks. Mention totals, branches, semester range, sessions.\n"
+            "- Never claim the chunks are the complete dataset.\n"
+        )
+        return f"{get_dataset_context()}\n\n{framing}\n{base}"
 
     async def _generate_response(
         self,
@@ -404,7 +492,8 @@ class RAGPipeline:
         """Generate response using LLM with retrieved (compressed) context."""
         system_prompt = await self._get_response_prompt()
         user_message = (
-            f"Based on the following student data, answer the user's question.\n\n"
+            f"Based on the following student data (a sample of the full dataset), "
+            f"answer the user's question.\n\n"
             f"{context_text}\n\n"
             f"Question: {query}"
         )

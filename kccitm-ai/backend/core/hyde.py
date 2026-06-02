@@ -52,7 +52,11 @@ class HyDEGenerator:
         Returns:
             Hypothetical answer text (~100-200 words)
         """
-        prompt = HYDE_PROMPT.format(query=query)
+        # Inject dataset context so the hypothetical document uses REAL branch
+        # names, sessions, and semester values — this dramatically improves
+        # embedding overlap with the stored chunks.
+        from core.dataset_context import get_dataset_context
+        prompt = f"{get_dataset_context()}\n\n{HYDE_PROMPT.format(query=query)}"
         try:
             response = await self.llm.generate(
                 prompt=prompt,

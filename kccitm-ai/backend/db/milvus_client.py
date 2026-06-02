@@ -22,6 +22,7 @@ import logging
 from typing import Any
 
 from pymilvus import MilvusClient, AnnSearchRequest, RRFRanker
+from pymilvus.exceptions import MilvusException
 
 from config import settings as _settings
 
@@ -100,14 +101,37 @@ class MilvusSearchClient:
 
         filter_expr = self._build_filter(filters)
 
-        results = self.client.hybrid_search(
-            collection_name=self.collection,
-            reqs=[dense_req, sparse_req],
-            ranker=RRFRanker(k=60),
-            filter=filter_expr,
-            output_fields=_OUTPUT_FIELDS,
-            limit=k,
-        )
+        # consistency_level="Strong" forces the post-ANN re-query to use the
+        # same view as the search — workaround for the pymilvus 2.5.0 race
+        # where hybrid_search returns IDs that the internal re-query can't
+        # re-fetch ("incomplete query result, missing id X").
+        def _run():
+            return self.client.hybrid_search(
+                collection_name=self.collection,
+                reqs=[dense_req, sparse_req],
+                ranker=RRFRanker(k=60),
+                filter=filter_expr,
+                output_fields=_OUTPUT_FIELDS,
+                limit=k,
+                consistency_level="Strong",
+            )
+
+        try:
+            results = _run()
+        except MilvusException as exc:
+            msg = str(exc).lower()
+            if "incomplete query result" in msg or "inconsistent requery" in msg:
+                logger.warning("hybrid_search re-query race; retrying once: %s", exc)
+                try:
+                    results = _run()
+                except MilvusException as exc2:
+                    logger.warning(
+                        "hybrid_search retry failed; falling back to dense_search: %s",
+                        exc2,
+                    )
+                    return self.dense_search(query_embedding, k=k, filters=filters)
+            else:
+                raise
 
         return self._format_results(results)
 
@@ -190,13 +214,18 @@ class MilvusSearchClient:
             limit=k,
         )
 
-        results = self.client.hybrid_search(
-            collection_name=faq_collection,
-            reqs=[dense_req, sparse_req],
-            ranker=RRFRanker(k=60),
-            output_fields=["faq_id", "question", "answer"],
-            limit=k,
-        )
+        try:
+            results = self.client.hybrid_search(
+                collection_name=faq_collection,
+                reqs=[dense_req, sparse_req],
+                ranker=RRFRanker(k=60),
+                output_fields=["faq_id", "question", "answer"],
+                limit=k,
+                consistency_level="Strong",
+            )
+        except MilvusException as exc:
+            logger.warning("FAQ hybrid_search failed: %s", exc)
+            return None
 
         formatted = self._format_results(results)
         return formatted[0] if formatted else None
@@ -330,6 +359,7 @@ class MilvusSearchClient:
                 ranker=RRFRanker(k=60),
                 limit=k,
                 output_fields=output_fields,
+                consistency_level="Strong",
             )
 
             formatted = []

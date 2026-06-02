@@ -352,17 +352,40 @@ class QueryCache:
         if new_nums and cached_nums and new_nums != cached_nums:
             return False
 
-        # Extract "top N" — different N means different query
-        new_top = re.search(r"top\s*(\d+)", new_lower)
-        cached_top = re.search(r"top\s*(\d+)", cached_lower)
-        if new_top and cached_top and new_top.group(1) != cached_top.group(1):
-            return False
+        # Extract "top N" / "bottom N" — different N means different query.
+        # Also reject if one query specifies N and the other doesn't —
+        # otherwise "top 5 students" can collide with "top 10 students".
+        for kw in ("top", "bottom"):
+            new_n = re.search(kw + r"\s*(\d+)", new_lower)
+            cached_n = re.search(kw + r"\s*(\d+)", cached_lower)
+            if bool(new_n) != bool(cached_n):
+                return False
+            if new_n and cached_n and new_n.group(1) != cached_n.group(1):
+                return False
 
-        # Extract branch names
-        branches = ["cse", "ece", "me", "mechanical", "computer science", "electronics"]
-        new_branches = {b for b in branches if b in new_lower}
-        cached_branches = {b for b in branches if b in cached_lower}
+        # Extract branch names. Use the live branch list from dataset_context
+        # so this stays in sync with the database (the hardcoded short list
+        # used to be incomplete — Civil/IT/AIML/sub-branches were missing,
+        # which let cache hits cross-pollute between branches).
+        try:
+            from core.dataset_context import get_branches
+            branch_names = [b.lower() for b in get_branches()]
+        except Exception:
+            branch_names = []
+        # Always include common abbreviations and short keywords too.
+        branch_tokens = [
+            "cse", "ece", "ee", "me ", "civil", "mechanical", "electrical",
+            "electronics", "computer science", "information technology",
+            "data science", "artificial intelligence", "machine learning",
+            "iot", "aiml", " it ",
+        ]
+        all_branch_terms = branch_names + branch_tokens
+        new_branches = {b for b in all_branch_terms if b in new_lower}
+        cached_branches = {b for b in all_branch_terms if b in cached_lower}
         if new_branches and cached_branches and new_branches != cached_branches:
+            return False
+        # Also reject if one query mentions a branch and the other doesn't
+        if bool(new_branches) != bool(cached_branches):
             return False
 
         # Extract gender — reject if mismatch or one has it and other doesn't
@@ -392,6 +415,23 @@ class QueryCache:
         new_subj = {s for s in subjects if s in new_lower}
         cached_subj = {s for s in subjects if s in cached_lower}
         if new_subj and cached_subj and new_subj != cached_subj:
+            return False
+
+        # Subject codes — robust because they're stable identifiers. Reject
+        # cross-pollination between e.g. "KCS501" and "KCS503". Uses the live
+        # subject-code set when available, else falls back to a regex.
+        try:
+            from core.dataset_context import get_subject_codes
+            known_codes = get_subject_codes()
+        except Exception:
+            known_codes = set()
+        code_re = re.compile(r"\b[A-Z]{2,4}\d{3,4}[A-Z]?\b")
+        new_codes = {c for c in code_re.findall(new_query.upper())}
+        cached_codes = {c for c in code_re.findall(cached_query.upper())}
+        if known_codes:
+            new_codes = new_codes & known_codes
+            cached_codes = cached_codes & known_codes
+        if new_codes != cached_codes:
             return False
 
         return True

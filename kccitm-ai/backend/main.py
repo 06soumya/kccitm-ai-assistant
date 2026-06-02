@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import get_llm, get_milvus, init_services
 from api.routes import admin, auth, chat, dashboard, feedback, sessions
+from core.dataset_context import load_dataset_context
 from jobs.scheduler import scheduler, setup_scheduler
 from tools.logger import setup_logging, RequestLoggingMiddleware
 from tools.security import SecurityMiddleware
@@ -25,6 +26,11 @@ async def lifespan(app: FastAPI):
     setup_logging()
     print("Initializing services...")
     init_services()
+    try:
+        chunk_count = int(get_milvus().get_collection_stats().get("row_count", 0))
+    except Exception:
+        chunk_count = None
+    await load_dataset_context(milvus_chunk_count=chunk_count)
     setup_scheduler()
     print("Services + scheduler initialized. Server ready.")
     yield

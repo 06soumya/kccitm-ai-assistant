@@ -173,6 +173,11 @@ class Orchestrator:
                     )
 
             # Step 0.5: Normalize query (typos, Hinglish, abbreviations)
+            # Save the raw form first — the meta-detector needs to see the
+            # original Hinglish ("kya kya data hai") because the normalizer
+            # rewrites it word-by-word into "what what data" which the
+            # detector's English patterns can't match.
+            raw_query = query
             query = normalize_query(query)
             q_lower = query.lower().strip()  # refresh after normalization
 
@@ -273,6 +278,34 @@ class Orchestrator:
                     total_time_ms=(time.perf_counter() - t0) * 1000,
                     metadata={"source": "aktu_knowledge_collection"},
                 )
+
+            # Step 2.65: Dataset meta-question short-circuit — "what kind of data
+            # do you have", "describe the database", "kya kya data hai".
+            # These can't be answered by RAG (no chunk summarises the dataset)
+            # and don't need SQL — return the templated overview built at
+            # startup from the cached dataset_context. Sub-50ms.
+            try:
+                from core.meta_detector import is_dataset_meta_question
+                from core.dataset_context import get_user_summary
+                # Check both raw and normalized — raw catches Hinglish
+                # ("kya kya data hai"), normalized catches English typos.
+                if is_dataset_meta_question(raw_query) or is_dataset_meta_question(query):
+                    summary = get_user_summary()
+                    if summary:
+                        if session_id:
+                            await self._save_to_session(
+                                session_id, query, summary,
+                                {"route_used": "DATASET_META"},
+                            )
+                        return QueryResponse(
+                            success=True,
+                            response=summary,
+                            route_used="DATASET_META",
+                            total_time_ms=(time.time() - t0) * 1000,
+                            metadata={"source": "dataset_overview"},
+                        )
+            except Exception as exc:
+                logger.debug("Dataset meta short-circuit failed (non-critical): %s", exc)
 
             # Step 2.7: Meta-question detection — explain previous answer or concepts
             try:
@@ -628,6 +661,27 @@ class Orchestrator:
                 sql_result = openai_result
                 sql_result.explanation = "(corrected by OpenAI — local returned 0 rows)"
             else:
+                # Aggregation queries (count / average / top-N / pass rate / etc.)
+                # must NOT fall through to RAG — RAG produces a narrative table
+                # from a handful of sampled student chunks and presents it as
+                # the answer, which silently fakes the aggregate. Return a
+                # truthful "no matches" answer instead, including the filters
+                # we used so the user can see what was assumed.
+                if self._is_aggregation_query(query, route_result):
+                    filter_summary = self._summarize_filters(route_result.filters)
+                    return QueryResponse(
+                        success=True,
+                        response=(
+                            f"No matching records were found"
+                            + (f" for {filter_summary}." if filter_summary else ".")
+                            + " The query ran successfully but returned 0 rows. "
+                            "Try broadening or rephrasing the filters."
+                        ),
+                        route_used="SQL",
+                        sql_result=sql_result,
+                        metadata={"empty_result": True, "skipped_rag_fallback": True},
+                    )
+
                 rag_result = await self.rag_pipeline.run(query, route_result, chat_history)
                 if rag_result.success and rag_result.chunk_count > 0:
                     return QueryResponse(
@@ -735,14 +789,78 @@ class Orchestrator:
 
         return None
 
+    _AGG_KEYWORDS = (
+        "how many", "count", "total", "number of",
+        "average", "avg ", "mean ", "median",
+        "top ", "bottom ", "highest", "lowest", "best", "worst",
+        "rank", "ranking", "list all", "list the",
+        "pass rate", "fail rate", "percentage", "percent ",
+        "compare", "comparison",
+    )
+
+    def _is_aggregation_query(self, query: str, route_result: RouteResult) -> bool:
+        """
+        True if the query is asking for an aggregate (count / average / top-N /
+        rate / comparison). Such queries must never silently fall back to RAG
+        when SQL returns 0 rows — RAG would fabricate a narrative summary that
+        looks like the aggregate.
+        """
+        q = (query or "").lower()
+        intent = (route_result.intent or "").lower()
+        return any(kw in q or kw in intent for kw in self._AGG_KEYWORDS)
+
+    @staticmethod
+    def _summarize_filters(filters: dict | None) -> str:
+        """Render a filter dict as a short human-readable string for error UX."""
+        if not filters:
+            return ""
+        parts = []
+        for k in ("branch", "course", "semester", "session", "subject_code", "name", "roll_no"):
+            v = filters.get(k)
+            if v:
+                parts.append(f"{k}={v}")
+        return ", ".join(parts)
+
     async def _handle_rag(
         self,
         query: str,
         route_result: RouteResult,
         chat_history: list[dict] | None,
     ) -> QueryResponse:
-        """RAG route: Milvus hybrid search → context assembly → LLM generation."""
+        """RAG route: Milvus hybrid search → context assembly → LLM generation.
+
+        If RAG retrieves nothing (even after the unfiltered retry inside the
+        pipeline), attempt SQL as a last resort — sometimes the query was
+        misrouted to RAG when SQL could actually answer it (e.g. "students who
+        got A+ in DBMS" without explicit aggregation keywords).
+        """
         rag_result = await self.rag_pipeline.run(query, route_result, chat_history)
+
+        if rag_result.success and rag_result.chunk_count == 0:
+            logger.info("RAG returned 0 chunks — attempting SQL fallback for: %s", query[:80])
+            try:
+                sql_result = await self.sql_pipeline.run(query, route_result)
+                if sql_result.success and sql_result.row_count > 0:
+                    if sql_result.row_count > 20 and sql_result.formatted_table:
+                        response_text = (
+                            f"Found {sql_result.row_count} results.\n\n"
+                            f"{sql_result.formatted_table}"
+                        )
+                    else:
+                        sql_context = self.context_builder.build_sql_context(sql_result)
+                        response_text = await self._generate_sql_summary(
+                            query, sql_context, chat_history
+                        )
+                    return QueryResponse(
+                        success=True,
+                        response=response_text,
+                        route_used="SQL (RAG empty)",
+                        sql_result=sql_result,
+                        rag_result=rag_result,
+                    )
+            except Exception as exc:
+                logger.warning("SQL fallback after empty RAG failed: %s", exc)
+
         return QueryResponse(
             success=rag_result.success,
             response=rag_result.response,
@@ -1600,7 +1718,16 @@ class Orchestrator:
     # ── LLM generation helpers ────────────────────────────────────────────────
 
     async def _get_response_prompt(self) -> str:
-        """Load response generator prompt from prompts.db, fallback to hardcoded."""
+        """
+        Load response generator prompt from prompts.db, fallback to hardcoded.
+
+        Prepends dataset context so SQL/HYBRID answer generation knows it's
+        describing a SAMPLE of a larger dataset (and what that dataset
+        actually contains) — mirrors RAGPipeline._get_response_prompt.
+        """
+        from core.dataset_context import get_dataset_context
+
+        base = RESPONSE_GENERATOR_PROMPT
         try:
             from db.sqlite_client import fetch_one
             row = await fetch_one(
@@ -1610,10 +1737,10 @@ class Orchestrator:
                 ("response_generator", "system"),
             )
             if row and row.get("content"):
-                return row["content"]
+                base = row["content"]
         except Exception:
             pass
-        return RESPONSE_GENERATOR_PROMPT
+        return f"{get_dataset_context()}\n\n{base}"
 
     async def _generate_sql_summary(
         self,
