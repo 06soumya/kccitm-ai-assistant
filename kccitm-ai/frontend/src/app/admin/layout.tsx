@@ -5,7 +5,7 @@ import { isAuthenticated, isAdmin } from '@/lib/auth';
 import Link from 'next/link';
 import {
   LayoutDashboard, MessageSquareWarning, Wrench, FileText,
-  HelpCircle, Blocks, Database, Cpu, Activity, ArrowLeft
+  HelpCircle, Blocks, Database, Cpu, Activity, ArrowLeft, CheckSquare
 } from 'lucide-react';
 
 const NAV = [
@@ -16,6 +16,7 @@ const NAV = [
   { href: '/admin/faqs', label: 'FAQs', icon: HelpCircle },
   { href: '/admin/chunks', label: 'Chunks', icon: Blocks },
   { href: '/admin/training', label: 'Training', icon: Database },
+  { href: '/admin/eval', label: 'Eval', icon: CheckSquare },
   { href: '/admin/models', label: 'Models', icon: Cpu },
   { href: '/admin/system', label: 'System', icon: Activity },
 ];

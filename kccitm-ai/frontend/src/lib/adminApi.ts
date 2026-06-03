@@ -52,6 +52,13 @@ export const exportTrainingData = () => adminFetch<any>('/api/admin/training/exp
 export const getStarStats = () => adminFetch<any>('/api/admin/dashboard/training/star-stats');
 export const addTrainingPair = (query: string, correct_sql: string) => adminFetch<any>('/api/admin/dashboard/training/rationalize', { method: 'POST', body: JSON.stringify({ query, correct_sql }) });
 
+// Eval
+export const getEvalQueries = () => adminFetch<any>('/api/admin/eval/queries');
+export const startEvalRun = () => adminFetch<any>('/api/admin/eval/run', { method: 'POST' });
+export const listEvalRuns = (limit = 20) => adminFetch<any>(`/api/admin/eval/runs?limit=${limit}`);
+export const getEvalRun = (runId: string) => adminFetch<any>(`/api/admin/eval/runs/${runId}`);
+export const getLatestEvalRun = () => adminFetch<any>('/api/admin/eval/runs/latest');
+
 // Models
 export const getModels = () => adminFetch<any>('/api/admin/models');
 export const switchModel = (modelName: string) => adminFetch<any>('/api/admin/models/switch', { method: 'POST', body: JSON.stringify({ model_name: modelName }) });

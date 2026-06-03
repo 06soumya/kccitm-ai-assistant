@@ -271,6 +271,14 @@ class MilvusSearchClient:
         if "course" in filters:
             safe = str(filters["course"]).replace('"', '\\"')
             conditions.append(f'course == "{safe}"')
+        if "session" in filters:
+            safe = str(filters["session"]).replace('"', '\\"')
+            conditions.append(f'session == "{safe}"')
+        if "gender" in filters:
+            # Schema stores single-char 'M' / 'F'
+            safe = str(filters["gender"]).strip().upper()[:1].replace('"', '\\"')
+            if safe in ("M", "F"):
+                conditions.append(f'gender == "{safe}"')
 
         return " and ".join(conditions) if conditions else None
 

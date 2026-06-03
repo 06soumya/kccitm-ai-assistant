@@ -1,0 +1,340 @@
+# KCCITM AI Assistant — Eval Set v1
+#
+# 50 queries spanning every route (SQL aggregate, SQL list, SQL comparison,
+# student lookup, RAG, META, CLARIFICATION, concept). Each query has:
+#   - `query`: the user's natural language question
+#   - `expected_route`: which route_used should match
+#   - `ground_truth_sql` (optional): SQL the runner executes to get the
+#     correct numeric answer for SQL aggregate queries
+#   - `tolerance` (optional, default 0.1): numeric tolerance for comparison
+#   - `extract_pattern` (optional, default first-number regex): how to pull
+#     the value out of the bot's natural-language response
+#
+# Routes the orchestrator can return:
+#   SQL | RAG | HYBRID | CACHED (...) | STUDENT_LOOKUP | FAQ |
+#   AKTU_LIVE | AKTU_CACHED | AKTU_KNOWLEDGE | META | EXPLANATION |
+#   CLARIFICATION | OPENAI
+#
+# `accept_routes` lets a query pass when route_used matches ANY of a list
+# (useful for CACHED hits and OPENAI fallbacks).
+
+metadata:
+  version: 1
+  description: "First eval — 50 questions across all routes. Ground truth derived from live MySQL."
+
+queries:
+  # ── SQL aggregate (15) ────────────────────────────────────────────────────
+  - id: agg-01
+    category: aggregate
+    query: "what is the average SGPA across all students"
+    expected_route: SQL
+    ground_truth_sql: "SELECT ROUND(AVG(sgpa), 2) AS v FROM semester_results WHERE sgpa > 0"
+    tolerance: 0.2
+
+  - id: agg-02
+    category: aggregate
+    query: "how many students are there in total"
+    expected_route: SQL
+    ground_truth_sql: "SELECT COUNT(*) AS v FROM students"
+    tolerance: 0
+
+  - id: agg-03
+    category: aggregate
+    query: "how many female students are there"
+    expected_route: SQL
+    ground_truth_sql: "SELECT COUNT(*) AS v FROM students WHERE gender = 'F'"
+    tolerance: 0
+
+  - id: agg-04
+    category: aggregate
+    query: "how many students are in batch 2023"
+    expected_route: SQL
+    ground_truth_sql: "SELECT COUNT(*) AS v FROM students WHERE roll_no LIKE '23%'"
+    tolerance: 0
+
+  - id: agg-05
+    category: aggregate
+    query: "how many students are in batch 2024"
+    expected_route: SQL
+    ground_truth_sql: "SELECT COUNT(*) AS v FROM students WHERE roll_no LIKE '24%'"
+    tolerance: 0
+
+  - id: agg-06
+    category: aggregate
+    query: "average SGPA in CSE branch"
+    expected_route: SQL
+    ground_truth_sql: "SELECT ROUND(AVG(sr.sgpa), 2) AS v FROM semester_results sr JOIN students s ON sr.roll_no = s.roll_no WHERE s.branch = 'COMPUTER SCIENCE AND ENGINEERING' AND sr.sgpa > 0"
+    tolerance: 0.3
+
+  - id: agg-07
+    category: aggregate
+    query: "average SGPA in semester 4"
+    expected_route: SQL
+    ground_truth_sql: "SELECT ROUND(AVG(sgpa), 2) AS v FROM semester_results WHERE semester = 4 AND sgpa > 0"
+    tolerance: 0.3
+
+  - id: agg-08
+    category: aggregate
+    query: "average marks in DBMS"
+    expected_route: SQL
+    ground_truth_sql: "SELECT ROUND(AVG(COALESCE(internal_marks,0) + COALESCE(external_marks,0)), 2) AS v FROM subject_marks WHERE subject_name LIKE '%Database Management%'"
+    tolerance: 1.0
+
+  - id: agg-09
+    category: aggregate
+    query: "average marks in operating systems"
+    expected_route: SQL
+    ground_truth_sql: "SELECT ROUND(AVG(COALESCE(internal_marks,0) + COALESCE(external_marks,0)), 2) AS v FROM subject_marks WHERE subject_name LIKE '%Operating System%'"
+    tolerance: 1.0
+
+  - id: agg-10
+    category: aggregate
+    query: "how many students are in CSE branch"
+    expected_route: SQL
+    ground_truth_sql: "SELECT COUNT(*) AS v FROM students WHERE branch = 'COMPUTER SCIENCE AND ENGINEERING'"
+    tolerance: 0
+
+  - id: agg-11
+    category: aggregate
+    query: "pass rate in semester 3"
+    expected_route: SQL
+    ground_truth_sql: "SELECT ROUND(SUM(CASE WHEN result_status IN ('PASS','PCP','PWG') OR result_status LIKE 'CP(% 0)' OR result_status = 'CP(0)' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS v FROM semester_results WHERE semester = 3"
+    tolerance: 2.0
+
+  - id: agg-12
+    category: aggregate
+    query: "how many students appeared in semester 1"
+    expected_route: SQL
+    ground_truth_sql: "SELECT COUNT(DISTINCT roll_no) AS v FROM semester_results WHERE semester = 1"
+    tolerance: 0
+
+  - id: agg-13
+    category: aggregate
+    query: "average internal marks in DBMS"
+    expected_route: SQL
+    ground_truth_sql: "SELECT ROUND(AVG(internal_marks), 2) AS v FROM subject_marks WHERE subject_name LIKE '%Database Management%' AND internal_marks IS NOT NULL"
+    tolerance: 1.0
+
+  - id: agg-14
+    category: aggregate
+    query: "how many male students are there"
+    expected_route: SQL
+    ground_truth_sql: "SELECT COUNT(*) AS v FROM students WHERE gender = 'M'"
+    tolerance: 0
+
+  - id: agg-15
+    category: aggregate
+    query: "average SGPA for batch 2023 students"
+    expected_route: SQL
+    ground_truth_sql: "SELECT ROUND(AVG(sr.sgpa), 2) AS v FROM semester_results sr JOIN students s ON sr.roll_no = s.roll_no WHERE s.roll_no LIKE '23%' AND sr.sgpa > 0"
+    tolerance: 0.3
+
+  # ── SQL list / top-N (5) ──────────────────────────────────────────────────
+  - id: list-01
+    category: list
+    query: "top 5 students by SGPA in CSE branch"
+    expected_route: SQL
+    # Route-only check — ranking match is too brittle for v1
+
+  - id: list-02
+    category: list
+    query: "top 10 students in DBMS"
+    expected_route: SQL
+
+  - id: list-03
+    category: list
+    query: "top 3 toppers in batch 2023"
+    expected_route: SQL
+
+  - id: list-04
+    category: list
+    query: "list students with SGPA above 9 in semester 5"
+    expected_route: SQL
+
+  - id: list-05
+    category: list
+    query: "lowest 5 SGPA students in semester 3"
+    expected_route: SQL
+
+  # ── SQL comparison (5) ────────────────────────────────────────────────────
+  - id: cmp-01
+    category: comparison
+    query: "compare average SGPA of male and female students"
+    expected_route: SQL
+
+  - id: cmp-02
+    category: comparison
+    query: "compare pass rate in semester 3 vs semester 4"
+    expected_route: SQL
+
+  - id: cmp-03
+    category: comparison
+    query: "compare batch 2023 and batch 2024 average SGPA"
+    expected_route: SQL
+
+  - id: cmp-04
+    category: comparison
+    query: "compare average marks in DBMS vs Operating Systems"
+    expected_route: SQL
+
+  - id: cmp-05
+    category: comparison
+    query: "which branch has the highest average SGPA"
+    expected_route: SQL
+
+  # ── Student lookup (5) ────────────────────────────────────────────────────
+  - id: lookup-01
+    category: student_lookup
+    query: "tell me about AAKASH SINGH"
+    expected_route: STUDENT_LOOKUP
+    expected_substring: "AAKASH"
+
+  - id: lookup-02
+    category: student_lookup
+    query: "show me 2104920100002"
+    expected_route: STUDENT_LOOKUP
+    expected_substring: "2104920100002"
+
+  - id: lookup-03
+    category: student_lookup
+    query: "AARTI MEHRA results"
+    expected_route: STUDENT_LOOKUP
+    expected_substring: "AARTI"
+
+  - id: lookup-04
+    category: student_lookup
+    query: "what is roll number 2104920100003"
+    expected_route: STUDENT_LOOKUP
+    expected_substring: "2104920100003"
+
+  - id: lookup-05
+    category: student_lookup
+    query: "details of ABHINAV DIXIT"
+    expected_route: STUDENT_LOOKUP
+    expected_substring: "ABHINAV"
+
+  # ── RAG (8) ──────────────────────────────────────────────────────────────
+  # These are qualitative — we only check the route. Quality of answer is
+  # judged separately (manual review or LLM-judge in a future v2).
+  - id: rag-01
+    category: rag
+    query: "describe a typical student profile in CSE"
+    expected_route: RAG
+    accept_routes: [RAG, HYBRID]
+
+  - id: rag-02
+    category: rag
+    query: "who is a struggling student"
+    expected_route: RAG
+    accept_routes: [RAG, HYBRID, SQL]
+
+  - id: rag-03
+    category: rag
+    query: "tell me about a top performer in CSE"
+    expected_route: RAG
+    accept_routes: [RAG, HYBRID, SQL, STUDENT_LOOKUP]
+
+  - id: rag-04
+    category: rag
+    query: "describe the academic profile of female students"
+    expected_route: RAG
+    accept_routes: [RAG, HYBRID, SQL]
+
+  - id: rag-05
+    category: rag
+    query: "what does a successful semester record look like"
+    expected_route: RAG
+    accept_routes: [RAG, HYBRID]
+
+  - id: rag-06
+    category: rag
+    query: "tell me about students in the AI ML branch"
+    expected_route: RAG
+    accept_routes: [RAG, HYBRID, SQL]
+
+  - id: rag-07
+    category: rag
+    query: "describe a poor-performing student record"
+    expected_route: RAG
+    accept_routes: [RAG, HYBRID]
+
+  - id: rag-08
+    category: rag
+    query: "show me an example student record from semester 5"
+    expected_route: RAG
+    accept_routes: [RAG, HYBRID, SQL]
+
+  # ── META (5) ──────────────────────────────────────────────────────────────
+  - id: meta-01
+    category: meta
+    query: "what kind of data do you have"
+    expected_route: META
+    accept_routes: [META, "CACHED (exact)", "CACHED (semantic)"]
+
+  - id: meta-02
+    category: meta
+    query: "describe the database"
+    expected_route: META
+    accept_routes: [META, "CACHED (exact)", "CACHED (semantic)"]
+
+  - id: meta-03
+    category: meta
+    query: "what information can you give me"
+    expected_route: META
+    accept_routes: [META, CLARIFICATION, "CACHED (exact)", "CACHED (semantic)"]
+
+  - id: meta-04
+    category: meta
+    query: "tell me what is in the database"
+    expected_route: META
+    accept_routes: [META, "CACHED (exact)", "CACHED (semantic)"]
+
+  - id: meta-05
+    category: meta
+    query: "what tables do you have"
+    expected_route: META
+    accept_routes: [META, "CACHED (exact)", "CACHED (semantic)"]
+
+  # ── Clarification (4) ─────────────────────────────────────────────────────
+  # Deliberately ambiguous — planner should ask for clarification.
+  - id: clr-01
+    category: clarification
+    query: "show me"
+    expected_route: CLARIFICATION
+
+  - id: clr-02
+    category: clarification
+    query: "asdfgh qwerty"
+    expected_route: CLARIFICATION
+    description: "Garbage input — pre-cache guard should clarify"
+
+  - id: clr-03
+    category: clarification
+    query: "marks"
+    expected_route: CLARIFICATION
+
+  - id: clr-04
+    category: clarification
+    query: "tell me about"
+    expected_route: CLARIFICATION
+
+  # ── Concept (3) ───────────────────────────────────────────────────────────
+  # Pure concept questions — should hit EXPLANATION (with chat history) or
+  # OPENAI (when enabled); RAG also acceptable as a fallback.
+  - id: concept-01
+    category: concept
+    query: "what is SGPA"
+    expected_route: RAG
+    accept_routes: [RAG, EXPLANATION, OPENAI, FAQ, HYBRID]
+
+  - id: concept-02
+    category: concept
+    query: "how does the grading system work"
+    expected_route: RAG
+    accept_routes: [RAG, EXPLANATION, OPENAI, FAQ, HYBRID]
+
+  - id: concept-03
+    category: concept
+    query: "what is a back paper"
+    expected_route: RAG
+    accept_routes: [RAG, EXPLANATION, OPENAI, FAQ, HYBRID]

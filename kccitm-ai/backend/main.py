@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import get_llm, get_milvus, init_services
-from api.routes import admin, auth, chat, dashboard, feedback, sessions
+from api.routes import admin, auth, chat, dashboard, eval as eval_routes, feedback, sessions
 from core.dataset_context import load_dataset_context
 from jobs.scheduler import scheduler, setup_scheduler
 from tools.logger import setup_logging, RequestLoggingMiddleware
@@ -69,6 +69,7 @@ app.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
 app.include_router(admin.router,    prefix="/api/admin",    tags=["Admin"])
 app.include_router(feedback.router,   prefix="/api",          tags=["Feedback"])
 app.include_router(dashboard.router,  prefix="/api/admin",    tags=["Dashboard"])
+app.include_router(eval_routes.router, prefix="/api/admin",   tags=["Eval"])
 
 
 @app.get("/api/health", tags=["Health"])

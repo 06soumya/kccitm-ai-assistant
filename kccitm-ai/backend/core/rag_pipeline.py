@@ -365,7 +365,10 @@ class RAGPipeline:
         if not route_result.needs_filter or not route_result.filters:
             return None
         filters = {}
-        for key in ("semester", "branch", "roll_no", "name", "course"):
+        # All keys here MUST be supported by MilvusSearchClient._build_filter
+        # — adding one without wiring it there is a no-op.
+        for key in ("semester", "branch", "roll_no", "name", "course",
+                    "session", "gender"):
             val = route_result.filters.get(key)
             if val is not None:
                 filters[key] = val
