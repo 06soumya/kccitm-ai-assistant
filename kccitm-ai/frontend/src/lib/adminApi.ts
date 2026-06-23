@@ -58,6 +58,9 @@ export const startEvalRun = () => adminFetch<any>('/api/admin/eval/run', { metho
 export const listEvalRuns = (limit = 20) => adminFetch<any>(`/api/admin/eval/runs?limit=${limit}`);
 export const getEvalRun = (runId: string) => adminFetch<any>(`/api/admin/eval/runs/${runId}`);
 export const getLatestEvalRun = () => adminFetch<any>('/api/admin/eval/runs/latest');
+export const pauseEvalRun = (runId: string) => adminFetch<any>(`/api/admin/eval/runs/${runId}/pause`, { method: 'POST' });
+export const resumeEvalRun = (runId: string) => adminFetch<any>(`/api/admin/eval/runs/${runId}/resume`, { method: 'POST' });
+export const abortEvalRun = (runId: string) => adminFetch<any>(`/api/admin/eval/runs/${runId}/abort`, { method: 'POST' });
 
 // Models
 export const getModels = () => adminFetch<any>('/api/admin/models');

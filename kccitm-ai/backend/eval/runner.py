@@ -98,16 +98,31 @@ def get_queries() -> list[dict]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+# Two-pass extraction: prefer the first DECIMAL number (rates, averages,
+# percentages — the things we actually compute), fall back to the first
+# INTEGER (counts). This handles the common failure mode where the query
+# itself mentions an integer ("semester 3" → "The pass rate in semester 3
+# is 78.5%") and "first number" would grab the 3.
+#
+# Both patterns also accept thousand-separated forms (4,705 / 1,234.56)
+# since bot responses routinely format big counts that way.
+_DECIMAL_RE = re.compile(r"-?\d{1,3}(?:,\d{3})*\.\d+|-?\d+\.\d+")
+_INTEGER_RE = re.compile(r"-?\d{1,3}(?:,\d{3})+|-?\d+")
 
 
 def _extract_first_number(text: str, pattern: Optional[str] = None) -> Optional[float]:
     """
-    Pull the first numeric token from a natural-language response.
+    Pull the most-likely-answer numeric token from a natural-language response.
 
-    If `pattern` is given, it should be a regex with one capture group that
-    isolates the value (e.g. for queries where the right number isn't the
-    first one in the response).
+    Strategy:
+      1. If a per-query regex `pattern` is supplied with a capture group,
+         use that.
+      2. Else: prefer the first decimal number, fall back to first integer.
+         Counts come out as integers, rates/averages as decimals — the
+         decimal-first preference skips integer "noise" tokens like
+         "semester 3" or "batch 2024" that the query itself mentions.
+
+    Handles thousand-separated numbers (4,705 → 4705).
     """
     if not text:
         return None
@@ -115,23 +130,32 @@ def _extract_first_number(text: str, pattern: Optional[str] = None) -> Optional[
         try:
             m = re.search(pattern, text)
             if m:
-                return float(m.group(1))
+                return float(m.group(1).replace(",", ""))
         except (re.error, ValueError, IndexError):
             pass
 
-    m = _NUMBER_RE.search(text)
+    m = _DECIMAL_RE.search(text)
+    if not m:
+        m = _INTEGER_RE.search(text)
     if not m:
         return None
     try:
-        return float(m.group(0))
+        return float(m.group(0).replace(",", ""))
     except ValueError:
         return None
 
 
 async def _fetch_ground_truth(sql: str) -> Optional[float]:
-    """Run the ground_truth_sql and return its single numeric value."""
+    """Run the ground_truth_sql and return its single numeric value.
+
+    pymysql interprets `%` as parameter syntax. We pass no params, so any
+    literal `%` (e.g. inside a `LIKE 'CP(% 0)'` clause) needs to be doubled
+    to `%%` before execution — otherwise pymysql raises 'not enough
+    arguments for format string'.
+    """
+    safe_sql = sql.replace("%", "%%")
     try:
-        rows = await execute_query(sql)
+        rows = await execute_query(safe_sql)
     except Exception as exc:
         logger.warning("Ground-truth SQL failed: %s | sql=%s", exc, sql[:120])
         return None
@@ -186,36 +210,95 @@ async def run_eval(
     orchestrator,
     run_id: Optional[str] = None,
     progress_cb=None,
+    clear_cache: bool = True,
+    resume: bool = False,
 ) -> dict:
     """
     Run every query in queries.yaml through the orchestrator.
 
     Args:
-        orchestrator: an Orchestrator instance (caller provides — usually
-            obtained from api.deps.get_orchestrator)
-        run_id: optional pre-allocated run id (caller can return it to the
-            client before kicking off the background task)
-        progress_cb: optional async coroutine `progress_cb(completed, total)`
-            invoked after every query
+        orchestrator: an Orchestrator instance.
+        run_id: optional pre-allocated run id; required when `resume=True`.
+        progress_cb: optional async `progress_cb(completed, total)`.
+        clear_cache: if True (default), flush the query cache before the
+            run so we measure real routing decisions. Ignored on resume —
+            we don't want to wipe cache mid-flight.
+        resume: if True, expect `run_id` to point to an existing PAUSED row
+            and continue from where it left off — already-completed query
+            IDs are skipped and the same row's counters are extended.
 
-    Returns the final summary dict (also persisted to eval.db).
+    Pause behavior: before each query the runner checks `eval_runs.status`.
+    If it isn't 'running' (e.g. flipped to 'paused' or 'aborted' by an API
+    call), the loop exits gracefully. All completed-query results are
+    already persisted; resume picks up from the next un-processed query.
     """
     await init_eval_db()
     queries = get_queries()
     total = len(queries)
-    run_id = run_id or f"run_{uuid.uuid4().hex[:8]}"
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    await execute(
-        str(EVAL_DB),
-        "INSERT INTO eval_runs (id, started_at, total, status) VALUES (?, ?, ?, 'running')",
-        (run_id, started, total),
-    )
+    if resume:
+        if not run_id:
+            raise ValueError("resume=True requires an existing run_id")
+        existing = await fetch_one(
+            str(EVAL_DB), "SELECT * FROM eval_runs WHERE id = ?", (run_id,),
+        )
+        if not existing:
+            raise ValueError(f"No such run to resume: {run_id}")
+        # Pull the set of already-completed query ids so we can skip them.
+        done_rows = await fetch_all(
+            str(EVAL_DB),
+            "SELECT query_id FROM eval_results WHERE run_id = ?",
+            (run_id,),
+        )
+        done_ids = {r["query_id"] for r in done_rows}
+        queries = [q for q in queries if q.get("id") not in done_ids]
+        passed = int(existing.get("passed") or 0)
+        failed = int(existing.get("failed") or 0)
+        errored = int(existing.get("errored") or 0)
+        completed = int(existing.get("completed") or 0)
+        await execute(
+            str(EVAL_DB),
+            "UPDATE eval_runs SET status='running', finished_at=NULL WHERE id = ?",
+            (run_id,),
+        )
+        logger.info(
+            "Eval %s resumed at %d/%d — %d queries remaining",
+            run_id, completed, total, len(queries),
+        )
+    else:
+        run_id = run_id or f"run_{uuid.uuid4().hex[:8]}"
+        if clear_cache and getattr(orchestrator, "cache", None):
+            try:
+                await orchestrator.cache.clear()
+                logger.info("Eval %s: cache cleared", run_id)
+            except Exception as exc:
+                logger.warning("Eval %s: cache clear failed: %s", run_id, exc)
+        await execute(
+            str(EVAL_DB),
+            "INSERT INTO eval_runs (id, started_at, total, status) VALUES (?, ?, ?, 'running')",
+            (run_id, started, total),
+        )
+        passed = failed = errored = completed = 0
 
-    passed = failed = errored = 0
-    completed = 0
-
+    completed_to_end = True
     for q in queries:
+        # Cooperative pause / abort check — runs before each query so we
+        # exit at a clean boundary, with all prior results already saved.
+        status_row = await fetch_one(
+            str(EVAL_DB),
+            "SELECT status FROM eval_runs WHERE id = ?",
+            (run_id,),
+        )
+        current_status = (status_row or {}).get("status")
+        if current_status != "running":
+            logger.info(
+                "Eval %s: status -> '%s' before query %s — stopping at %d/%d",
+                run_id, current_status, q.get("id"), completed, total,
+            )
+            completed_to_end = False
+            break
+
         result = await _run_one(orchestrator, q)
         completed += 1
 
@@ -259,12 +342,13 @@ async def run_eval(
             except Exception:
                 pass
 
-    finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    await execute(
-        str(EVAL_DB),
-        "UPDATE eval_runs SET finished_at = ?, status = 'finished' WHERE id = ?",
-        (finished, run_id),
-    )
+    if completed_to_end:
+        finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        await execute(
+            str(EVAL_DB),
+            "UPDATE eval_runs SET finished_at = ?, status = 'finished' WHERE id = ?",
+            (finished, run_id),
+        )
 
     return {
         "run_id": run_id,
@@ -272,6 +356,7 @@ async def run_eval(
         "passed": passed,
         "failed": failed,
         "errored": errored,
+        "completed_to_end": completed_to_end,
         "pass_rate": round(passed / total, 4) if total else 0.0,
     }
 

@@ -2,9 +2,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   getEvalQueries, startEvalRun, listEvalRuns, getEvalRun, getLatestEvalRun,
+  pauseEvalRun, resumeEvalRun, abortEvalRun,
 } from '@/lib/adminApi';
 import MetricCard from '@/components/admin/MetricCard';
-import { Play, CheckCircle2, XCircle, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { Play, Pause, CheckCircle2, XCircle, AlertTriangle, Loader2, RefreshCw, Square } from 'lucide-react';
 
 interface EvalQuery {
   id: string;
@@ -86,7 +87,9 @@ export default function EvalPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Poll while a run is active
+  // Poll while a run is active (running). Stop polling once it transitions
+  // to a terminal-ish state (paused / finished / aborted) — the user will
+  // hit Resume / Run-eval to nudge state forward.
   useEffect(() => {
     if (!currentRun || currentRun.status !== 'running') return;
     const t = setInterval(async () => {
@@ -94,7 +97,6 @@ export default function EvalPage() {
         const updated = await getEvalRun(currentRun.id);
         setCurrentRun(updated);
         if (updated.status !== 'running') {
-          // refresh the list
           const rs = await listEvalRuns(20);
           setRuns(rs.runs || []);
         }
@@ -122,6 +124,42 @@ export default function EvalPage() {
     }
   };
 
+  const handlePauseRun = async () => {
+    if (!currentRun) return;
+    try {
+      await pauseEvalRun(currentRun.id);
+      // Refresh detail immediately
+      const detail = await getEvalRun(currentRun.id);
+      setCurrentRun(detail);
+    } catch (err: any) {
+      alert('Pause failed: ' + (err.message || String(err)));
+    }
+  };
+
+  const handleResumeRun = async () => {
+    if (!currentRun) return;
+    try {
+      await resumeEvalRun(currentRun.id);
+      // Optimistic
+      setCurrentRun({ ...currentRun, status: 'running' });
+      setTimeout(() => loadData(), 1000);
+    } catch (err: any) {
+      alert('Resume failed: ' + (err.message || String(err)));
+    }
+  };
+
+  const handleAbortRun = async () => {
+    if (!currentRun) return;
+    if (!confirm(`Abort run ${currentRun.id}? This cannot be undone.`)) return;
+    try {
+      await abortEvalRun(currentRun.id);
+      const detail = await getEvalRun(currentRun.id);
+      setCurrentRun(detail);
+    } catch (err: any) {
+      alert('Abort failed: ' + (err.message || String(err)));
+    }
+  };
+
   const handleLoadRun = async (id: string) => {
     const detail = await getEvalRun(id);
     setCurrentRun(detail);
@@ -145,14 +183,50 @@ export default function EvalPage() {
             to detect regressions and quantify accuracy across releases.
           </p>
         </div>
-        <button
-          onClick={handleStartRun}
-          disabled={starting || currentRun?.status === 'running'}
-          className="bg-kcc text-white hover:bg-kcc-dark px-4 py-2 text-xs rounded-lg font-medium transition-all disabled:opacity-50 flex items-center gap-1.5"
-        >
-          {currentRun?.status === 'running' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-          {currentRun?.status === 'running' ? 'Running…' : 'Run eval'}
-        </button>
+        <div className="flex gap-2">
+          {currentRun?.status === 'running' && (
+            <>
+              <button
+                onClick={handlePauseRun}
+                className="bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 px-4 py-2 text-xs rounded-lg font-medium transition-all flex items-center gap-1.5"
+              >
+                <Pause size={14} /> Pause
+              </button>
+              <button
+                onClick={handleAbortRun}
+                className="bg-white text-red-600 border border-red-200 hover:bg-red-50 px-4 py-2 text-xs rounded-lg font-medium transition-all flex items-center gap-1.5"
+              >
+                <Square size={14} /> Abort
+              </button>
+            </>
+          )}
+          {currentRun?.status === 'paused' && (
+            <>
+              <button
+                onClick={handleResumeRun}
+                className="bg-kcc text-white hover:bg-kcc-dark px-4 py-2 text-xs rounded-lg font-medium transition-all flex items-center gap-1.5"
+              >
+                <Play size={14} /> Resume
+              </button>
+              <button
+                onClick={handleAbortRun}
+                className="bg-white text-red-600 border border-red-200 hover:bg-red-50 px-4 py-2 text-xs rounded-lg font-medium transition-all flex items-center gap-1.5"
+              >
+                <Square size={14} /> Abort
+              </button>
+            </>
+          )}
+          {(!currentRun || currentRun.status === 'finished' || currentRun.status === 'aborted') && (
+            <button
+              onClick={handleStartRun}
+              disabled={starting}
+              className="bg-kcc text-white hover:bg-kcc-dark px-4 py-2 text-xs rounded-lg font-medium transition-all disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {starting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              {starting ? 'Starting…' : 'Run eval'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Current run summary */}

@@ -1069,14 +1069,75 @@ class Orchestrator:
                     "I'm not sure I understood — could you give me more detail?"
                 )
             if not understood.get("clarification_options"):
-                understood["clarification_options"] = [
-                    "Show me top students in a branch",
-                    "Average SGPA in a branch",
-                    "Tell me about a specific student",
-                    "How many students passed in a session",
-                ]
+                understood["clarification_options"] = self._fallback_clarification_options(
+                    query, understood,
+                )
 
         return understood
+
+    @staticmethod
+    def _fallback_clarification_options(query: str, plan: dict) -> list[str]:
+        """
+        G6-1 — derive clarification options from the query's extracted entities
+        instead of returning a generic four-option list. Used by the escalation
+        path when re-plan still couldn't commit AND didn't propose its own
+        options.
+
+        Picks the most specific entity present (subject > branch > semester >
+        batch > session) and offers concrete, runnable queries built around it.
+        Falls back to the generic list when no entity was extracted.
+        """
+        entities = (plan.get("entities") or {}) if isinstance(plan, dict) else {}
+        subject = entities.get("subject")
+        branch = entities.get("branch")
+        semester = entities.get("semester")
+        batch = entities.get("batch")
+        session = entities.get("session")
+        student = plan.get("student_name") if isinstance(plan, dict) else None
+
+        if subject:
+            return [
+                f"Average marks in {subject}",
+                f"Top 10 students in {subject}",
+                f"Pass rate in {subject}",
+            ]
+        if student:
+            return [
+                f"Show full results for {student}",
+                f"SGPA trend for {student}",
+                f"Subjects {student} struggled in",
+            ]
+        if branch:
+            return [
+                f"Top 10 students in {branch}",
+                f"Average SGPA in {branch}",
+                f"How many students in {branch}",
+            ]
+        if semester is not None:
+            return [
+                f"Average SGPA in semester {semester}",
+                f"Top 10 students in semester {semester}",
+                f"Pass rate in semester {semester}",
+            ]
+        if batch:
+            return [
+                f"Top students in batch {batch}",
+                f"Average SGPA in batch {batch}",
+                f"How many students in batch {batch}",
+            ]
+        if session:
+            return [
+                f"How many students passed in {session}",
+                f"Average SGPA in {session}",
+                f"Top performers in {session}",
+            ]
+        # No entity extracted — keep the generic prompts.
+        return [
+            "Show me top students in a branch",
+            "Average SGPA in a branch",
+            "Tell me about a specific student",
+            "How many students passed in a session",
+        ]
 
     def _plan_entities_to_filters(self, entities: dict) -> dict:
         """Map planner entities → SQL pipeline filter keys."""
