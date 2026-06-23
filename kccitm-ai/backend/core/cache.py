@@ -256,12 +256,17 @@ class QueryCache:
         if not row:
             return None
 
-        # ADDITIVE GUARD: reject semantic hit if key entities differ
-        # (e.g. "semester 1" vs "semester 3", "batch 2021" vs "batch 2022")
-        if not self._entities_match(query, row["query_text"]):
+        # Final gate: ask the LLM whether the two queries actually ask the
+        # same thing. The embedding tells us they're CLOSE; the LLM tells us
+        # whether close → equivalent. Replaces a regex/keyword guard
+        # (semester/batch/branch/subject/modifier/pass-vs-fail) that was
+        # both brittle and grew every time a new failure mode appeared.
+        # Cost: ~500ms — paid only on semantic hits, still far cheaper than
+        # rerunning SQL/RAG.
+        if not await self._queries_equivalent(query, row["query_text"]):
             logger.debug(
-                "Cache: semantic match rejected — entities differ: '%s' vs '%s'",
-                query[:50], row["query_text"][:50],
+                "Cache: LLM rejected semantic match — '%s' vs '%s'",
+                query[:60], row["query_text"][:60],
             )
             return None
 
@@ -316,125 +321,50 @@ class QueryCache:
         normalized = normalized.rstrip("?!.")
         return normalized
 
-    @staticmethod
-    def _entities_match(new_query: str, cached_query: str) -> bool:
+    async def _queries_equivalent(self, q1: str, q2: str) -> bool:
         """
-        ADDITIVE check: reject semantic cache hit if key entities differ.
+        LLM equivalence check — would these two queries return the same answer?
 
-        Extracts semester numbers, batch years, and student names from both queries.
-        Returns True (allow hit) if entities are compatible, False (reject) if they differ.
+        Called only after the embedding has already said the two are close.
+        Replaces a regex/keyword guard that grew every time a new failure mode
+        appeared (modifier mismatches, pass-vs-fail, branch list drift, etc.)
+        — each hardcoded shape was one more thing the LLM understood but the
+        cache didn't.
 
-        This can only REJECT a hit — it never overrides a cache miss.
+        Fail-closed: if the LLM errors, reject the cache hit and fall through
+        to the regular pipeline. Cost of a false miss (one extra pipeline run)
+        is much smaller than the cost of a false hit (wrong answer cached).
         """
-        new_lower = new_query.lower()
-        cached_lower = cached_query.lower()
+        # Exact equality after normalization is a trivial yes — no LLM call.
+        if self._normalize_query(q1) == self._normalize_query(q2):
+            return True
 
-        # Extract semester numbers
-        new_sems = set(re.findall(r"semester\s*(\d+)", new_lower))
-        new_sems.update(re.findall(r"\bsem\s*(\d+)", new_lower))
-        cached_sems = set(re.findall(r"semester\s*(\d+)", cached_lower))
-        cached_sems.update(re.findall(r"\bsem\s*(\d+)", cached_lower))
-        if new_sems and cached_sems and new_sems != cached_sems:
-            return False
-        # One has a specific semester, the other doesn't — reject
-        if new_sems != cached_sems:
-            return False
-
-        # Extract batch years — reject if one has batch and the other doesn't
-        new_batches = set(re.findall(r"batch\s*(\d{4})", new_lower))
-        cached_batches = set(re.findall(r"batch\s*(\d{4})", cached_lower))
-        if new_batches != cached_batches:
-            return False
-
-        # Extract standalone numbers that look like semesters (1-8) after "in" or "for"
-        new_nums = set(re.findall(r"(?:in|for)\s+(\d)\b", new_lower))
-        cached_nums = set(re.findall(r"(?:in|for)\s+(\d)\b", cached_lower))
-        if new_nums and cached_nums and new_nums != cached_nums:
-            return False
-
-        # Extract "top N" / "bottom N" — different N means different query.
-        # Also reject if one query specifies N and the other doesn't —
-        # otherwise "top 5 students" can collide with "top 10 students".
-        for kw in ("top", "bottom"):
-            new_n = re.search(kw + r"\s*(\d+)", new_lower)
-            cached_n = re.search(kw + r"\s*(\d+)", cached_lower)
-            if bool(new_n) != bool(cached_n):
-                return False
-            if new_n and cached_n and new_n.group(1) != cached_n.group(1):
-                return False
-
-        # Extract branch names. Use the live branch list from dataset_context
-        # so this stays in sync with the database (the hardcoded short list
-        # used to be incomplete — Civil/IT/AIML/sub-branches were missing,
-        # which let cache hits cross-pollute between branches).
+        prompt = (
+            "Two user questions about a student academic database "
+            "(students, semester results, subject marks, branches, batches).\n"
+            "Would they return IDENTICAL answers from the database?\n"
+            "\n"
+            "Same intent + paraphrased wording → YES.\n"
+            "Different filters, metrics, aggregations, modifiers, direction "
+            "(pass vs fail, internal vs total, semester N vs M, etc.) → NO.\n"
+            "\n"
+            f"Q1: {q1}\n"
+            f"Q2: {q2}\n"
+            "\n"
+            "Reply with exactly one word: YES or NO."
+        )
         try:
-            from core.dataset_context import get_branches
-            branch_names = [b.lower() for b in get_branches()]
-        except Exception:
-            branch_names = []
-        # Always include common abbreviations and short keywords too.
-        branch_tokens = [
-            "cse", "ece", "ee", "me ", "civil", "mechanical", "electrical",
-            "electronics", "computer science", "information technology",
-            "data science", "artificial intelligence", "machine learning",
-            "iot", "aiml", " it ",
-        ]
-        all_branch_terms = branch_names + branch_tokens
-        new_branches = {b for b in all_branch_terms if b in new_lower}
-        cached_branches = {b for b in all_branch_terms if b in cached_lower}
-        if new_branches and cached_branches and new_branches != cached_branches:
+            resp = await self.llm.generate(
+                prompt, temperature=0.0, max_tokens=8,
+            )
+            answer = (resp or "").strip().upper()
+            return answer.startswith("YES")
+        except Exception as exc:
+            logger.warning(
+                "Cache: LLM equivalence check failed (%s) — rejecting cache hit",
+                exc,
+            )
             return False
-        # Also reject if one query mentions a branch and the other doesn't
-        if bool(new_branches) != bool(cached_branches):
-            return False
-
-        # Extract gender — reject if mismatch or one has it and other doesn't
-        genders = ["male", "female"]
-        new_gender = {g for g in genders if g in new_lower}
-        cached_gender = {g for g in genders if g in cached_lower}
-        if new_gender != cached_gender:
-            return False
-
-        # Intent mismatch: "how many" (count) vs "list" (enumerate) are different
-        count_words = ["how many", "count", "total number", "number of"]
-        list_words = ["list", "list all", "show all", "all the students"]
-        new_is_count = any(w in new_lower for w in count_words)
-        cached_is_count = any(w in cached_lower for w in count_words)
-        new_is_list = any(w in new_lower for w in list_words)
-        cached_is_list = any(w in cached_lower for w in list_words)
-        if (new_is_count and cached_is_list) or (new_is_list and cached_is_count):
-            return False
-
-        # Subject name mismatch — reject if different subjects mentioned
-        subjects = [
-            "dbms", "dsa", "physics", "chemistry", "math", "automata",
-            "compiler", "network", "algorithm", "operating system",
-            "software engineering", "machine learning", "artificial intelligence",
-            "data structure", "web", "cloud", "cyber",
-        ]
-        new_subj = {s for s in subjects if s in new_lower}
-        cached_subj = {s for s in subjects if s in cached_lower}
-        if new_subj and cached_subj and new_subj != cached_subj:
-            return False
-
-        # Subject codes — robust because they're stable identifiers. Reject
-        # cross-pollination between e.g. "KCS501" and "KCS503". Uses the live
-        # subject-code set when available, else falls back to a regex.
-        try:
-            from core.dataset_context import get_subject_codes
-            known_codes = get_subject_codes()
-        except Exception:
-            known_codes = set()
-        code_re = re.compile(r"\b[A-Z]{2,4}\d{3,4}[A-Z]?\b")
-        new_codes = {c for c in code_re.findall(new_query.upper())}
-        cached_codes = {c for c in code_re.findall(cached_query.upper())}
-        if known_codes:
-            new_codes = new_codes & known_codes
-            cached_codes = cached_codes & known_codes
-        if new_codes != cached_codes:
-            return False
-
-        return True
 
     def _ttl_cutoff(self) -> str:
         """ISO timestamp for the TTL cutoff (now - TTL hours)."""

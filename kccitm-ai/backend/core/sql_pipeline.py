@@ -809,7 +809,8 @@ class SQLPipeline:
                 from core.sql_templates import (
                     get_relevant_templates, format_for_prompt,
                 )
-                relevant = get_relevant_templates(
+                relevant = await get_relevant_templates(
+                    self.llm,
                     query,
                     operation=getattr(route_result, "operation", ""),
                     aggregation=getattr(route_result, "aggregation", ""),

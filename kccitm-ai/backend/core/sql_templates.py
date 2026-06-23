@@ -10,10 +10,22 @@ Replaces three hardcoded paths from sql_pipeline:
 These templates are SHOWN to the LLM as reference shapes — not enforced.
 The LLM is free to write SQL from scratch; the templates are there to
 nudge the small local model toward known-good shapes on complex queries.
+
+Template retrieval is EMBEDDING-DRIVEN: each template's description +
+when_to_use string is embedded once (lazily, on first call), and at
+query time we rank by cosine similarity. No keyword scoring, no regex
+"boosts" — the embedder learns which template shape matches which
+question. Add a new template (description + SQL) and it joins the
+retrieval pool with zero code changes.
 """
 from __future__ import annotations
 
-import re
+import asyncio
+import logging
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ── Template registry ────────────────────────────────────────────────────────
 
@@ -182,8 +194,46 @@ JOIN semester_results sr ON s.roll_no = sr.roll_no
 GROUP BY s.<GROUP_COL>
 ORDER BY avg_sgpa DESC""",
         "notes": "<GROUP_COL> is the dimension to compare: branch, gender, course. "
-                 "For batch comparison: `CASE WHEN roll_no LIKE '21%' THEN '2021' "
-                 "WHEN roll_no LIKE '22%' THEN '2022' END AS batch`.",
+                 "For BATCH comparison use the dedicated `compare_batches` template "
+                 "below — batch is not a column, it's derived from roll_no.",
+    },
+
+    # 8b. Compare batches — batch is derived from roll_no prefix, NOT a column.
+    # This is the shape cmp-03 was failing on: the LLM kept missing the
+    # CASE WHEN derivation and the SQL would either error or return one batch.
+    "compare_batches": {
+        "name": "compare_batches",
+        "description": "Compare a metric (avg SGPA, pass rate, count) across two or more batches. Batch is derived from roll_no LIKE 'YY%' — there is no batch column.",
+        "when_to_use": "Query mentions two or more batches AND asks to compare/contrast (compare batch 2023 and 2024, batch 21 vs batch 22, etc.).",
+        "triggers": [
+            "compare batch", "batch comparison", "batches",
+            "batch 2021", "batch 2022", "batch 2023", "batch 2024", "batch 2025",
+            "across batches", "between batch",
+        ],
+        "sql": """SELECT
+    CASE
+        WHEN s.roll_no LIKE '21%' THEN '2021'
+        WHEN s.roll_no LIKE '22%' THEN '2022'
+        WHEN s.roll_no LIKE '23%' THEN '2023'
+        WHEN s.roll_no LIKE '24%' THEN '2024'
+        WHEN s.roll_no LIKE '25%' THEN '2025'
+    END AS batch,
+    ROUND(AVG(sr.sgpa), 2) AS avg_sgpa,
+    COUNT(DISTINCT s.roll_no) AS n_students
+FROM students s
+JOIN semester_results sr ON s.roll_no = sr.roll_no
+WHERE sr.sgpa > 0
+  AND (s.roll_no LIKE '23%' OR s.roll_no LIKE '24%')   -- restrict to user-named batches
+GROUP BY batch
+HAVING batch IS NOT NULL
+ORDER BY batch""",
+        "notes": "Always derive batch from roll_no LIKE 'YY%' where YY = last two "
+                 "digits of the year (23 = batch 2023). NEVER reference a "
+                 "`batch` or `batch_year` column — they do not exist. The WHERE "
+                 "clause must restrict to the user-named batches so unrelated "
+                 "batches don't pollute the result. For pass-rate comparison "
+                 "swap AVG(sr.sgpa) for `ROUND(SUM(CASE WHEN result_status IN "
+                 "('PASS','PCP','PWG') THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2)`.",
     },
 
     # 9. Per-branch / per-semester topper or aggregate
@@ -264,35 +314,96 @@ def get_template(name: str) -> dict | None:
     return _TEMPLATES.get(name)
 
 
-def get_relevant_templates(
+# ── Embedding-based retrieval ───────────────────────────────────────────────
+#
+# Each template's description+when_to_use string is embedded once on first
+# call. The query is embedded at call time and templates are ranked by
+# cosine similarity. No keyword scoring, no per-template boost lists —
+# adding a new template is just adding a row.
+
+_TEMPLATE_EMBEDDINGS: dict[str, np.ndarray] = {}
+_EMBED_LOCK = asyncio.Lock()
+
+
+def _template_corpus_text(t: dict) -> str:
+    """The text we embed for retrieval — description carries the semantic
+    meaning, when_to_use lists the situations, notes adds detail."""
+    return " ".join([
+        t.get("description", ""),
+        t.get("when_to_use", ""),
+        t.get("notes", ""),
+    ]).strip()
+
+
+async def _ensure_template_embeddings(llm) -> None:
+    """Embed each template once. Idempotent — safe to call on every query."""
+    if _TEMPLATE_EMBEDDINGS:
+        return
+    async with _EMBED_LOCK:
+        if _TEMPLATE_EMBEDDINGS:   # double-check after lock
+            return
+        for name, t in _TEMPLATES.items():
+            text = _template_corpus_text(t)
+            if not text:
+                continue
+            try:
+                emb = await llm.embed(text)
+                _TEMPLATE_EMBEDDINGS[name] = np.array(emb, dtype=np.float32)
+            except Exception as exc:
+                logger.warning(
+                    "Template embed failed for %s: %s — skipping", name, exc,
+                )
+
+
+async def get_relevant_templates(
+    llm,
     query: str,
     operation: str = "",
     aggregation: str = "",
     top_k: int = 3,
+    min_score: float = 0.45,
 ) -> list[dict]:
     """
-    Return up to `top_k` templates whose triggers match the query the most.
+    Rank templates by embedding cosine similarity to the query.
 
-    Scoring is plain keyword overlap — simple and predictable. With ~10
-    templates this is faster than embedding lookup and the ordering is
-    easy to debug. If no trigger matches, returns an empty list.
+    The planner's `operation` and `aggregation` are appended to the query
+    text before embedding — that way the planner's structured understanding
+    of the query shapes retrieval WITHOUT us hardcoding any per-template
+    boost lists. ("compare batches" + operation="comparison" produces an
+    embedding biased toward the comparison templates.)
+
+    Returns the top-k templates above min_score (cosine). On any error
+    (embed failure, no templates) returns []; the SQL pipeline then falls
+    back to no-template generation.
     """
     if not query:
         return []
-    q = query.lower()
-    scored: list[tuple[int, dict]] = []
-    for t in _TEMPLATES.values():
-        score = sum(1 for kw in t["triggers"] if kw in q)
-        # Boost templates whose operation/aggregation matches the planner
-        if operation == "aggregate" and t["name"] in (
-            "pass_rate", "subject_aggregate", "compare_groups",
-            "trend_across_semesters", "per_group_aggregate",
-        ):
-            score += 1
-        if aggregation == "pass_rate" and t["name"] == "pass_rate":
-            score += 2
-        if score > 0:
-            scored.append((score, t))
+
+    await _ensure_template_embeddings(llm)
+    if not _TEMPLATE_EMBEDDINGS:
+        return []
+
+    query_with_intent = query
+    if operation:
+        query_with_intent += f" (operation: {operation})"
+    if aggregation:
+        query_with_intent += f" (aggregation: {aggregation})"
+
+    try:
+        q_emb = np.array(await llm.embed(query_with_intent), dtype=np.float32)
+    except Exception as exc:
+        logger.warning("Template ranking: query embed failed: %s", exc)
+        return []
+
+    q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-8)
+
+    scored: list[tuple[float, dict]] = []
+    for name, t_emb in _TEMPLATE_EMBEDDINGS.items():
+        t_norm = t_emb / (np.linalg.norm(t_emb) + 1e-8)
+        sim = float(q_norm @ t_norm)
+        if sim >= min_score:
+            scored.append((sim, _TEMPLATES[name]))
+
     scored.sort(key=lambda x: -x[0])
     return [t for _, t in scored[:top_k]]
 
