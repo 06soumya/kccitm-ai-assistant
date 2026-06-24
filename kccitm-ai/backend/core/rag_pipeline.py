@@ -116,8 +116,10 @@ One follow-up question suggestion.
 
 ADDITIONAL RULES:
 - End every answer with: Confidence: High/Medium/Low based on how much data supported your answer.
-- If SQL returns 0 rows, say: No matching records found for [state the filters used].
-- Quote exact numbers from the provided data. Never estimate or round unless the data itself is rounded."""
+- Quote exact numbers from the provided data. Never estimate or round unless the data itself is rounded.
+- Empty-result handling is done by the orchestrator (with the actual filter
+  summary). Do NOT instruct the user to "state the filters used" or invent a
+  filter description if the provided context is empty — say so plainly."""
 
 
 # ── Data model ────────────────────────────────────────────────────────────────

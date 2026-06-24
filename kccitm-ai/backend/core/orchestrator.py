@@ -525,8 +525,19 @@ class Orchestrator:
                         response.route_used = "OPENAI"
                         response.total_time_ms = (time.time() - t0) * 1000
 
-            # Step 5: Store in cache (only successful non-empty responses)
-            if response.success and response.response:
+            # Step 5: Store in cache (only successful, *confirmed* responses)
+            #
+            # Cache poisoning is real: a wrong response cached on the first
+            # run will be served on Tier 1 exact-match for the next 24-72h,
+            # so every fixed bug echoes back from cache. Skip cache writes
+            # for any response that is structurally untrustworthy:
+            #   - empty results ("no records found") — re-run later, the
+            #     filters or data may have changed
+            #   - SQL/RAG fallback responses — these are recovery paths,
+            #     not authoritative answers
+            #   - responses carrying a sql_result.error or rag_result.error
+            #   - very short responses (≤ 30 chars) — almost always errors
+            if response.success and response.response and self._cacheable(response):
                 await self.cache.store(
                     query=query,
                     response=response.response,
@@ -992,25 +1003,36 @@ class Orchestrator:
                 sql_result = openai_result
                 sql_result.explanation = "(corrected by OpenAI — local returned 0 rows)"
             else:
-                # Aggregation queries (count / average / top-N / pass rate / etc.)
-                # must NOT fall through to RAG — RAG produces a narrative table
-                # from a handful of sampled student chunks and presents it as
-                # the answer, which silently fakes the aggregate. Return a
-                # truthful "no matches" answer instead, including the filters
-                # we used so the user can see what was assumed.
-                if self._is_aggregation_query(query, route_result):
+                # Analytical queries (list / aggregate / comparison) must NOT
+                # fall through to RAG — RAG produces a narrative table from a
+                # handful of sampled student chunks and silently fakes the
+                # aggregate. Use the planner's operation classification (same
+                # signal Path A uses) rather than keyword heuristics. The
+                # _is_aggregation_query keyword fallback remains only for the
+                # edge case where the planner didn't set operation (e.g.
+                # router-LLM fallback path).
+                op = (route_result.operation or "").lower()
+                is_analytical = (
+                    op in ("list", "aggregate", "comparison")
+                    or (not op and self._is_aggregation_query(query, route_result))
+                )
+                if is_analytical:
                     filter_summary = self._summarize_filters(route_result.filters)
                     return QueryResponse(
                         success=True,
                         response=(
-                            f"No matching records were found"
+                            "No matching records were found"
                             + (f" for {filter_summary}." if filter_summary else ".")
                             + " The query ran successfully but returned 0 rows. "
                             "Try broadening or rephrasing the filters."
                         ),
                         route_used="SQL",
                         sql_result=sql_result,
-                        metadata={"empty_result": True, "skipped_rag_fallback": True},
+                        metadata={
+                            "empty_result": True,
+                            "skipped_rag_fallback": True,
+                            "operation": op,
+                        },
                     )
 
                 rag_result = await self.rag_pipeline.run(query, route_result, chat_history)
@@ -1368,10 +1390,53 @@ class Orchestrator:
         rate / comparison). Such queries must never silently fall back to RAG
         when SQL returns 0 rows — RAG would fabricate a narrative summary that
         looks like the aggregate.
+
+        Used only as a fallback when the planner didn't classify the operation
+        (e.g. router-LLM fallback path). The primary check is now
+        route_result.operation in {list, aggregate, comparison}.
         """
         q = (query or "").lower()
         intent = (route_result.intent or "").lower()
         return any(kw in q or kw in intent for kw in self._AGG_KEYWORDS)
+
+    def _cacheable(self, response: "QueryResponse") -> bool:
+        """
+        Decide whether a successful response should be written to cache.
+
+        Cache poisoning has been our recurring failure mode: a wrong answer
+        cached once is served on Tier 1 exact-match for the next 24-72h.
+        Skip any response that is structurally untrustworthy or transient,
+        even when `success=True`.
+        """
+        md = response.metadata or {}
+
+        # Honest "no records" answers: filters or data may change — re-run
+        # next time instead of caching the empty.
+        if md.get("empty_result"):
+            return False
+
+        # Recovery routes (SQL failed → RAG, etc.) are best-effort. Don't
+        # enshrine them as the canonical answer for this query text.
+        route = (response.route_used or "").upper()
+        if (
+            "FALLBACK" in route
+            or "(SQL EMPTY)" in route
+            or md.get("fallback")
+            or md.get("skipped_rag_fallback")
+        ):
+            return False
+
+        # Pipeline errors carried through to a success=True response.
+        if response.sql_result and response.sql_result.error:
+            return False
+        if response.rag_result and response.rag_result.error:
+            return False
+
+        # Extremely short responses are almost always errors, not answers.
+        if len(response.response.strip()) <= 30:
+            return False
+
+        return True
 
     @staticmethod
     def _summarize_filters(filters: dict | None) -> str:
