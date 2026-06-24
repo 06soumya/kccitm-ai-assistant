@@ -170,9 +170,12 @@ reasoning : ONE short sentence explaining your plan. For logs + debugging.
     by itself), set needs_clarification=true with options for avg vs top vs
     pass-rate. If the verb is clear ("average DBMS marks") proceed without
     clarification.
-13. NEVER auto-fill missing entities from the dataset list. Only fill what
-    the user actually said (or what history makes clear via
-    active_student_followup).
+13. NEVER auto-fill missing entities from the dataset list, from
+    earlier examples in this prompt, or from "common" subjects/branches.
+    Only fill what the user ACTUALLY said in their query (or what history
+    makes clear via active_student_followup). If the query is "pass rate
+    in semester 3", entities must NOT contain a subject — the user did not
+    name one. Inventing a subject changes the answer and is a hard failure.
 
 === DATASET (for grounding entity extraction) ===
 {dataset_ctx}
@@ -183,15 +186,16 @@ User query: "{query}"
 
 Respond with ONLY a JSON object. No prose before or after.
 
-Example for "average marks in DBMS for ECE semester 4":
+Example A — query NAMES a subject (extract it):
+"average marks in Operating Systems for ECE semester 4"
 {{
   "intent": "analytical",
   "operation": "aggregate",
   "route": "SQL",
-  "entities": {{"subject": "DBMS", "branch": "ECE", "semester": 4, "aggregation": "avg"}},
+  "entities": {{"subject": "Operating Systems", "branch": "ECE", "semester": 4, "aggregation": "avg"}},
   "student_name": null,
   "roll_no": null,
-  "expanded_query": "average marks in DBMS for ECE semester 4",
+  "expanded_query": "average marks in Operating Systems for ECE semester 4",
   "is_followup": false,
   "active_student_followup": false,
   "confidence": 0.95,
@@ -200,10 +204,32 @@ Example for "average marks in DBMS for ECE semester 4":
   "clarification_question": null,
   "clarification_options": [],
   "needs_templates": false,
-  "reasoning": "Clear aggregate request — AVG over subject_marks filtered by branch + semester."
+  "reasoning": "Clear aggregate — AVG over subject_marks filtered by subject + branch + semester."
 }}
 
-Example for "DBMS marks":
+Example B — query DOES NOT name a subject (entities must NOT contain subject):
+"pass rate in semester 3"
+{{
+  "intent": "analytical",
+  "operation": "aggregate",
+  "route": "SQL",
+  "entities": {{"semester": 3, "aggregation": "pass_rate"}},
+  "student_name": null,
+  "roll_no": null,
+  "expanded_query": "pass rate in semester 3",
+  "is_followup": false,
+  "active_student_followup": false,
+  "confidence": 0.9,
+  "ambiguities": [],
+  "needs_clarification": false,
+  "clarification_question": null,
+  "clarification_options": [],
+  "needs_templates": false,
+  "reasoning": "User asks for the pass rate across all students in semester 3 — no subject was named, so do NOT add one. Aggregation over semester_results."
+}}
+
+Example C — bare subject without an operation (ask for clarification):
+"DBMS marks"
 {{
   "intent": "analytical",
   "operation": "unknown",
