@@ -852,7 +852,7 @@ class Orchestrator:
         """
         sql_result = await self.sql_pipeline.run(query, route_result)
 
-        # Path A: Local SQL failed entirely → try OpenAI SQL → RAG fallback
+        # Path A: Local SQL failed entirely → try OpenAI SQL → honest error or RAG
         if not sql_result.success:
             logger.info("SQL failed (%s) — trying OpenAI SQL", sql_result.error)
             openai_result = await self._try_openai_sql(query)
@@ -860,6 +860,40 @@ class Orchestrator:
                 sql_result = openai_result
                 sql_result.explanation = "(corrected by OpenAI)"
             else:
+                # CORRECTNESS GUARD: when the planner classified this as
+                # an analytical query (list / aggregate / comparison), RAG
+                # cannot produce a correct answer — it retrieves a handful
+                # of chunks and the LLM fabricates a ranked table or count
+                # from them, presenting random data as the answer with
+                # high confidence (this is exactly how "top students in
+                # CSE" returned out-of-order SGPAs of 7.67/4.25/5.40 when
+                # the real top 3 share 9.37). Return honest error instead.
+                op = (route_result.operation or "").lower()
+                if op in ("list", "aggregate", "comparison"):
+                    filter_summary = self._summarize_filters(route_result.filters)
+                    msg = (
+                        "I couldn't compute this answer reliably. The SQL query "
+                        f"failed with: {sql_result.error}."
+                    )
+                    if filter_summary:
+                        msg += f" Filters I tried: {filter_summary}."
+                    msg += (
+                        " Try rephrasing more concretely — e.g. naming the "
+                        "metric, the cohort, and the time window explicitly."
+                    )
+                    return QueryResponse(
+                        success=False,
+                        response=msg,
+                        route_used="SQL",
+                        sql_result=sql_result,
+                        error=sql_result.error,
+                        metadata={
+                            "sql_error": sql_result.error,
+                            "skipped_rag_fallback": True,
+                            "operation": op,
+                        },
+                    )
+
                 rag_result = await self.rag_pipeline.run(query, route_result, chat_history)
                 return QueryResponse(
                     success=rag_result.success,
