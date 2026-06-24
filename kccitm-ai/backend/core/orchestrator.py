@@ -37,6 +37,7 @@ from config import settings
 from core.cache import QueryCache, CacheHit
 from core.context_builder import ContextBuilder
 from core.llm_client import OllamaClient
+from core.operations import dispatch as dispatch_operation
 from core.rag_pipeline import RAGPipeline, RAGResult, RESPONSE_GENERATOR_PROMPT
 from core.router import QueryRouter, RouteResult
 from core.session_manager import SessionManager
@@ -847,9 +848,87 @@ class Orchestrator:
         chat_history: list[dict] | None,
     ) -> QueryResponse:
         """
-        SQL route: run SQL pipeline → sanity check → OpenAI fallback → summarize.
-        Falls back to RAG if all SQL paths fail.
+        SQL route: dispatch → executor (fast path) OR LLM-SQL pipeline → summarize.
+
+        Dispatch fast path: when the planner's (operation, slots) maps to a
+        registered deterministic executor in core/operations.py, we run that
+        instead of letting the LLM generate SQL. No retries, no hallucinated
+        joins, no fabricated rankings — and ~10× faster on the common shapes.
+
+        Falls through to the LLM-SQL pipeline when dispatch declines (long-tail
+        queries that don't fit any registered operation).
         """
+        # ── Dispatch fast path ─────────────────────────────────────────────
+        executor_result = await dispatch_operation(query, route_result)
+        if executor_result is not None and executor_result.success:
+            sql_result = executor_result.to_sql_result()
+            sql_result.formatted_table = (
+                self.sql_pipeline._format_as_markdown_table(sql_result.rows)
+            )
+            sql_result.formatted_text = self.sql_pipeline._format_as_text(
+                sql_result.rows, sql_result.sql, sql_result.explanation,
+            )
+
+            # Empty result: don't fall to RAG (analytical zero-rows must be
+            # honest — same principle as Path B in the LLM-SQL path).
+            if sql_result.row_count == 0:
+                filter_summary = self._summarize_filters(route_result.filters)
+                return QueryResponse(
+                    success=True,
+                    response=(
+                        "No matching records were found"
+                        + (f" for {filter_summary}." if filter_summary else ".")
+                        + " The query ran successfully but returned 0 rows. "
+                        "Try broadening or rephrasing the filters."
+                    ),
+                    route_used=f"DISPATCH:{executor_result.operation}",
+                    sql_result=sql_result,
+                    metadata={
+                        "empty_result": True,
+                        "dispatched": True,
+                        "operation": executor_result.operation,
+                        "slots": executor_result.slots,
+                    },
+                )
+
+            if sql_result.row_count > 20 and sql_result.formatted_table:
+                response_text = (
+                    f"Found {sql_result.row_count} results.\n\n"
+                    f"{sql_result.formatted_table}"
+                )
+            else:
+                sql_context = self.context_builder.build_sql_context(sql_result)
+                response_text = await self._generate_sql_summary(
+                    query, sql_context, chat_history,
+                )
+
+            chart_data = self._extract_chart_data(query, sql_result)
+            metadata = {
+                "dispatched": True,
+                "operation": executor_result.operation,
+                "slots": executor_result.slots,
+            }
+            if chart_data:
+                metadata["chart_data"] = chart_data
+
+            return QueryResponse(
+                success=True,
+                response=response_text,
+                route_used=f"DISPATCH:{executor_result.operation}",
+                sql_result=sql_result,
+                metadata=metadata,
+            )
+
+        if executor_result is not None and not executor_result.success:
+            # Executor matched the shape but failed (missing slot or DB error).
+            # Fall through to the LLM-SQL path so the long-tail safety valve
+            # still gets a shot — better than silently failing.
+            logger.info(
+                "Dispatch executor %s declined (%s) — falling through to LLM-SQL",
+                executor_result.operation, executor_result.error,
+            )
+
+        # ── LLM-SQL path (long-tail / novel queries) ───────────────────────
         sql_result = await self.sql_pipeline.run(query, route_result)
 
         # Path A: Local SQL failed entirely → try OpenAI SQL → honest error or RAG
@@ -1189,6 +1268,11 @@ class Orchestrator:
             # Plan emits subject *name* (e.g. "DBMS") — sql_pipeline
             # LIKE-matches against subject_marks.subject_name.
             f["subject_name"] = entities["subject"]
+        # top_n must propagate to filters so the dispatcher can route "top N"
+        # queries to the top_students executor (RouteResult.entities is a
+        # list[str] of human-readable mentions, not a dict).
+        if entities.get("top_n") is not None:
+            f["top_n"] = entities["top_n"]
         return f
 
     def _route_from_plan(self, plan: dict, query: str) -> RouteResult:
