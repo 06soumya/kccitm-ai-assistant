@@ -36,6 +36,7 @@ Adding a new operation:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -77,6 +78,38 @@ class ExecutorResult:
 
 
 # ── Slot helpers ──────────────────────────────────────────────────────────────
+
+# Backstop slot extraction for batch.
+#
+# This is NOT a routing gate — the planner has already classified the
+# operation by the time dispatch() runs. This regex only fills in a slot
+# the planner *dropped* (observed: planner returns op=aggregate but
+# filters=[] for "how many students are in batch 2023"). When the planner
+# correctly extracts batch into filters, we never touch that value.
+#
+# Match shapes observed in real queries:
+#   "batch 2023" / "batch of 2023" / "in 2023 batch" / "year 2023" /
+#   "batch 23" / "batch 2023-2024"
+# Restrict to a plausible roll_no prefix window (21–25 today, but allow
+# 20–29 to age forward) to avoid matching random 4-digit numbers.
+_BATCH_PATTERNS = (
+    re.compile(r"\bbatch\s+(?:of\s+)?(20\d{2})\b", re.IGNORECASE),
+    re.compile(r"\bbatch\s+(2[0-9])\b",            re.IGNORECASE),
+    re.compile(r"\b(20\d{2})\s+batch\b",           re.IGNORECASE),
+    re.compile(r"\byear\s+(20\d{2})\b",            re.IGNORECASE),
+)
+
+
+def _extract_batch_from_text(query: str) -> str | None:
+    """Backstop: extract a batch year from the query text. Returns "YY" prefix or None."""
+    if not query:
+        return None
+    for pat in _BATCH_PATTERNS:
+        m = pat.search(query)
+        if m:
+            return _batch_prefix(m.group(1))
+    return None
+
 
 def _batch_prefix(batch: Any) -> str | None:
     """
@@ -318,11 +351,14 @@ async def pass_rate(
         #   CP( N), CP(N) where N>0 = promoted with N backlogs (subjects to clear)
         #   FAIL                    = outright fail
         #   INCOMPLETE              = absent / incomplete result
-        # Different stakeholders mean different things by "pass rate":
-        #   • Strict (no backlogs):    pass_rate_clean
-        #   • Promoted to next sem:    pass_rate_promoted   (clean + with_backlogs)
-        # Returning both lets the formatter answer the user's actual question
-        # honestly instead of picking one and getting it wrong.
+        #
+        # ONE primary `pass_rate_pct` column — the conservative reading
+        # (cleared all subjects, no backlogs). When we returned both
+        # pass_rate_clean_pct AND pass_rate_promoted_pct, the formatter
+        # LLM picked the higher-looking number AND hallucinated supporting
+        # counts. Single canonical rate eliminates that failure mode.
+        # The breakdown (cleared / promoted_with_backlogs / failed) is
+        # still in supporting columns so the formatter can add context.
         where = []
         params = []
         if sem is not None:
@@ -338,29 +374,23 @@ async def pass_rate(
                      "AND sr.result_status <> '')")
         sql = f"""
             SELECT
-                COUNT(*) AS total_results,
-                SUM(CASE WHEN UPPER(TRIM(sr.result_status)) = 'PASS'
-                          OR REPLACE(sr.result_status, ' ', '') = 'CP(0)'
-                         THEN 1 ELSE 0 END) AS pass_clean,
-                SUM(CASE WHEN UPPER(TRIM(sr.result_status)) IN ('PCP','PWG')
-                          OR (sr.result_status LIKE 'CP%%'
-                              AND REPLACE(sr.result_status, ' ', '') <> 'CP(0)')
-                         THEN 1 ELSE 0 END) AS pass_with_backlogs,
-                SUM(CASE WHEN UPPER(TRIM(sr.result_status)) = 'FAIL'
-                         THEN 1 ELSE 0 END) AS failed,
                 ROUND(
                     100.0 * SUM(CASE WHEN UPPER(TRIM(sr.result_status)) = 'PASS'
                                       OR REPLACE(sr.result_status, ' ', '') = 'CP(0)'
                                      THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*), 0),
                     2
-                ) AS pass_rate_clean_pct,
-                ROUND(
-                    100.0 * SUM(CASE WHEN UPPER(TRIM(sr.result_status)) <> 'FAIL'
-                                     THEN 1 ELSE 0 END)
-                          / NULLIF(COUNT(*), 0),
-                    2
-                ) AS pass_rate_promoted_pct
+                ) AS pass_rate_pct,
+                SUM(CASE WHEN UPPER(TRIM(sr.result_status)) = 'PASS'
+                          OR REPLACE(sr.result_status, ' ', '') = 'CP(0)'
+                         THEN 1 ELSE 0 END) AS students_cleared_all_subjects,
+                SUM(CASE WHEN UPPER(TRIM(sr.result_status)) IN ('PCP','PWG')
+                          OR (sr.result_status LIKE 'CP%%'
+                              AND REPLACE(sr.result_status, ' ', '') <> 'CP(0)')
+                         THEN 1 ELSE 0 END) AS students_promoted_with_backlogs,
+                SUM(CASE WHEN UPPER(TRIM(sr.result_status)) = 'FAIL'
+                         THEN 1 ELSE 0 END) AS students_failed,
+                COUNT(*) AS total_students
             FROM semester_results sr
             JOIN students s ON sr.roll_no = s.roll_no
             {_build_where(where)}
@@ -473,19 +503,43 @@ async def average_marks(
     if prefix:
         where.append("sm.roll_no LIKE %s"); params.append(f"{prefix}%")
 
+    # UNION'd query: row 1 is the weighted overall (across all subject_code
+    # variants matching the LIKE pattern); rows 2..N are the per-variant
+    # breakdown. The user's most likely intent for "average marks in DBMS"
+    # is the overall — but the per-variant detail is still useful, so we
+    # surface both and let the formatter lead with row 1 (subject_code=NULL,
+    # subject_name="(overall)").
+    where_sql = _build_where(where)
     sql = f"""
-        SELECT sm.subject_name, sm.subject_code,
-               ROUND(AVG(COALESCE(sm.internal_marks, 0) + COALESCE(sm.external_marks, 0)), 2) AS avg_total_marks,
-               ROUND(AVG(sm.internal_marks), 2) AS avg_internal,
-               ROUND(AVG(sm.external_marks), 2) AS avg_external,
-               COUNT(*) AS student_count
-        FROM subject_marks sm
-        JOIN students s ON sm.roll_no = s.roll_no
-        {_build_where(where)}
-        GROUP BY sm.subject_name, sm.subject_code
-        ORDER BY avg_total_marks DESC
+        SELECT * FROM (
+            SELECT '(overall)' AS subject_name,
+                   NULL         AS subject_code,
+                   ROUND(AVG(COALESCE(sm.internal_marks, 0) + COALESCE(sm.external_marks, 0)), 2) AS avg_total_marks,
+                   ROUND(AVG(sm.internal_marks), 2) AS avg_internal,
+                   ROUND(AVG(sm.external_marks), 2) AS avg_external,
+                   COUNT(*) AS student_count,
+                   0 AS sort_key
+            FROM subject_marks sm
+            JOIN students s ON sm.roll_no = s.roll_no
+            {where_sql}
+
+            UNION ALL
+
+            SELECT sm.subject_name, sm.subject_code,
+                   ROUND(AVG(COALESCE(sm.internal_marks, 0) + COALESCE(sm.external_marks, 0)), 2) AS avg_total_marks,
+                   ROUND(AVG(sm.internal_marks), 2) AS avg_internal,
+                   ROUND(AVG(sm.external_marks), 2) AS avg_external,
+                   COUNT(*) AS student_count,
+                   1 AS sort_key
+            FROM subject_marks sm
+            JOIN students s ON sm.roll_no = s.roll_no
+            {where_sql}
+            GROUP BY sm.subject_name, sm.subject_code
+        ) AS combined
+        ORDER BY sort_key, avg_total_marks DESC
     """
-    return await _run("average_marks", sql, tuple(params), slots)
+    # The WHERE clause is reused for both halves of the UNION.
+    return await _run("average_marks", sql, tuple(params + params), slots)
 
 
 async def count_query(
@@ -632,6 +686,15 @@ async def dispatch(query: str, route_result: Any) -> ExecutorResult | None:
     semester = filters.get("semester")
     subject = filters.get("subject_name") or entities.get("subject")
     batch = filters.get("batch") or entities.get("batch")
+    # Backstop: planner sometimes classifies the operation but drops the
+    # batch slot ("how many students are in batch 2023" → op=aggregate but
+    # filters=[]). Pick up the missing slot from raw query text. We NEVER
+    # override a batch the planner did set.
+    if not batch:
+        batch_from_text = _extract_batch_from_text(query)
+        if batch_from_text:
+            batch = batch_from_text
+            logger.info("dispatch: batch slot filled from text backstop -> %s", batch)
     name = filters.get("name") or entities.get("student_name")
     roll_no = filters.get("roll_no") or entities.get("roll_no")
     gender = filters.get("gender") or entities.get("gender")
