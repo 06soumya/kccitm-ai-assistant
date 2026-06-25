@@ -201,6 +201,32 @@ reasoning : ONE short sentence explaining your plan. For logs + debugging.
     father_name, branch tokens the user spelled, and any other proper
     nouns. The downstream lookup uses fuzzy LIKE matching — your job is
     to pass through what was typed, not to guess at intent.
+17. FAILURE SEMANTICS — only applies to COHORT queries, NOT individual
+    students. When the query is about a SINGLE NAMED STUDENT
+    (intent=student_lookup, e.g. "how many backlogs does soumya sukriti
+    have", "list of subjects soumya failed in"), this rule does NOT
+    apply — that's a lookup, route=SQL, intent=student_lookup, with
+    student_name set. The lookup path handles it.
+
+    Otherwise, when the query is about MULTIPLE/UNNAMED students AND
+    contains "fail / failed / failures / fails / flunked", the operation
+    is about FAILURES, not about top performance or generic counts:
+    - "how many [students] failed in [subject]" / "fail rate of X" →
+      operation=aggregate, aggregation=pass_rate, subject=[subject].
+      The pass_rate executor reports both pass AND fail counts; the
+      formatter will read the failed column. DO NOT emit aggregation=count
+      here — count_query has no subject filter and will return the wrong
+      number.
+    - "list of failures in [subject]" / "students who failed [subject]" /
+      "who all failed [subject]" (no specific student named) →
+      operation=list with subject set BUT DO NOT set top_n. Leave top_n
+      unset so the long-tail LLM-SQL path can write the
+      SELECT-failed-students query; dispatch's top_students_in_subject
+      would return the WRONG shape (it ranks by total_marks DESC, the
+      opposite of what was asked).
+    - "failure rate" / "failure %" → same as fail rate, aggregate +
+      pass_rate. The executor returns pass_rate_pct; fail rate = 100 -
+      that value, so do not invent a separate aggregation.
 
 === DATASET (for grounding entity extraction) ===
 {dataset_ctx}
@@ -335,6 +361,48 @@ Example F — bare branch + "failures" is ambiguous between cohort and subject:
   "clarification_options": ["Overall pass rate for ME", "Students who failed (any subject) in ME", "Fails in a specific ME subject"],
   "needs_templates": false,
   "reasoning": "Branch + 'failures' alone names three distinct queries with different answers; pick one would be a guess."
+}}
+
+Example G — "how many failed in [subject]" is a pass_rate query, NOT a count:
+"how many students failed in math 1"
+{{
+  "intent": "analytical",
+  "operation": "aggregate",
+  "route": "SQL",
+  "entities": {{"subject": "math 1", "aggregation": "pass_rate"}},
+  "student_name": null,
+  "roll_no": null,
+  "expanded_query": "how many students failed in math 1",
+  "is_followup": false,
+  "active_student_followup": false,
+  "confidence": 0.9,
+  "ambiguities": [],
+  "needs_clarification": false,
+  "clarification_question": null,
+  "clarification_options": [],
+  "needs_templates": false,
+  "reasoning": "Per hard rule 17, 'failed in [subject]' → aggregation=pass_rate (which reports both pass AND fail counts); using aggregation=count here would route to a no-subject counter and return the wrong number."
+}}
+
+Example H — "list of failures in [subject]" is NOT a top-N query:
+"list of failures in COA"
+{{
+  "intent": "analytical",
+  "operation": "list",
+  "route": "SQL",
+  "entities": {{"subject": "COA"}},
+  "student_name": null,
+  "roll_no": null,
+  "expanded_query": "list of failures in COA",
+  "is_followup": false,
+  "active_student_followup": false,
+  "confidence": 0.85,
+  "ambiguities": [],
+  "needs_clarification": false,
+  "clarification_question": null,
+  "clarification_options": [],
+  "needs_templates": false,
+  "reasoning": "Per hard rule 17, 'list of failures' wants students who failed (grade=F) — not the top-N rankers in this subject. Deliberately leaving top_n UNSET so dispatch falls through to LLM-SQL, which can write the SELECT-failed-students query."
 }}
 
 Your output:"""

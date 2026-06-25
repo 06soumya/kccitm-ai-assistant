@@ -458,6 +458,24 @@ class Orchestrator:
                     if identifier:
                         result = await self.sql_pipeline.search_student(identifier)
 
+                        # Retry with stopword-stripped recovery on 0 results —
+                        # catches the case where rule 16 worked too well and
+                        # planner extracted ALL of "om sing of bath 2024" as
+                        # the name. Only retries if recovery produces a
+                        # meaningfully shorter token list.
+                        if (result["found"] == 0
+                                and not (identifier.isdigit() and len(identifier) == 13)):
+                            recovered = self._recover_name_from_query(raw_query or query)
+                            if (recovered and recovered != identifier.lower()
+                                    and len(recovered.split()) < len(identifier.split())):
+                                logger.info(
+                                    "Lookup 0-result retry: '%s' → '%s'",
+                                    identifier, recovered,
+                                )
+                                result = await self.sql_pipeline.search_student(recovered)
+                                if result["found"] > 0:
+                                    identifier = recovered
+
                         if result["found"] == 0:
                             resp_text = f"No student found matching '{identifier}'. Try a different name, roll number, or batch year."
                         elif result["found"] > 1:
