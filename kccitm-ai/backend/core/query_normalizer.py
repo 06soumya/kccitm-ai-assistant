@@ -392,17 +392,14 @@ def normalize_query(query: str) -> str:
             corrected_words.append(word)
     text = ' '.join(corrected_words)
 
-    # Step 4: Fuzzy correction (conservative — distance 1, length >= 5)
-    words = text.split()
-    fuzzy_words = []
-    for word in words:
-        clean_word = word.strip(".,!?;:'\"")
-        if len(clean_word) >= 5 and not clean_word.isdigit():
-            corrected = _fuzzy_correct(clean_word)
-            fuzzy_words.append(corrected if corrected != clean_word else word)
-        else:
-            fuzzy_words.append(word)
-    text = ' '.join(fuzzy_words)
+    # Step 4 (DISABLED): Fuzzy Levenshtein correction was mangling student
+    # names — "sukriti" was being "corrected" to a domain vocab token (e.g.
+    # "subject"), causing student_lookup to search for the wrong name and
+    # return "No student found matching 'Soumya Sruktri'". The eval surfaced
+    # this with lookup-03 ("how many backlogs does soumya sukriti has").
+    # Steps 2 (Hinglish) and 3 (exact typo map) handle the safe corrections;
+    # they don't touch unmapped words like names. Substring LIKE in the
+    # lookup query handles ordinary typos ("om sing" still finds "OM SINGH").
 
     # Step 5: Abbreviation expansion (only safe standalone terms)
     words = text.split()

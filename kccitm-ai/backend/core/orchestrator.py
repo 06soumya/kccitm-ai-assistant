@@ -433,6 +433,21 @@ class Orchestrator:
 
                     elif understood.get("student_name"):
                         identifier = understood["student_name"]
+                        # Defensive: the 7B planner sometimes "auto-corrects"
+                        # Indian student names (Sukriti → Srikriti / Srikuti /
+                        # Sruktri — different each run, all wrong). If the
+                        # extracted name isn't actually a substring of what
+                        # the user typed, strip operation words from the raw
+                        # query and use what's left (which is almost always
+                        # the verbatim name the user typed).
+                        if identifier and identifier.lower() not in (raw_query or query).lower():
+                            recovered = self._recover_name_from_query(raw_query or query)
+                            logger.warning(
+                                "Planner mangled student_name: extracted=%r not in query — falling back to %r",
+                                identifier, recovered,
+                            )
+                            if recovered:
+                                identifier = recovered
 
                     elif understood.get("active_student_followup"):
                         # Use the active student from session metadata
@@ -1458,6 +1473,52 @@ class Orchestrator:
             if v:
                 parts.append(f"{k}={v}")
         return ", ".join(parts)
+
+    # Words that almost never appear in student names — used to recover
+    # a name from raw query text when the 7B planner mangles it. Sourced
+    # from the operation/aggregation/filter vocabulary of real queries
+    # the eval surfaced. Add cautiously: anything here is forbidden as a
+    # name token, so a real surname matching one of these would be dropped.
+    _NAME_RECOVERY_STOPWORDS = frozenset({
+        "a", "an", "the", "of", "in", "for", "to", "by", "on", "at", "with",
+        "and", "or", "is", "are", "was", "were", "be", "been", "has", "have", "had",
+        "do", "does", "did", "show", "tell", "find", "get", "give", "list", "display",
+        "what", "which", "who", "whose", "how", "many", "much", "about", "from",
+        "me", "us", "you", "i", "my", "your", "his", "her",
+        "result", "results", "marks", "mark", "grade", "grades", "score", "scores",
+        "backlog", "backlogs", "back", "subject", "subjects", "semester", "sem",
+        "branch", "batch", "year", "name", "names", "father", "fathers",
+        "topper", "toppers", "top", "best", "highest", "lowest", "worst", "bottom",
+        "average", "avg", "mean", "median", "count", "total", "number", "pass", "fail",
+        "passed", "failed", "rate", "rates", "percent", "percentage", "ratio",
+        "exam", "exams", "regulation", "regulations", "card", "report",
+        "students", "student", "girl", "girls", "boy", "boys",
+        "this", "that", "these", "those", "any", "all", "some", "more", "less",
+        "than", "then", "so", "not", "no", "yes",
+    })
+
+    @classmethod
+    def _recover_name_from_query(cls, query: str) -> str:
+        """
+        Heuristically extract a student name from a raw query by stripping
+        common operation/stopword tokens. Last-resort fallback when the
+        planner mangles the name and we can't trust its extraction.
+        """
+        if not query:
+            return ""
+        # Strip punctuation, keep apostrophes inside names
+        cleaned = re.sub(r"[^\w'\s]", " ", query.lower())
+        tokens = [
+            t for t in cleaned.split()
+            if t and t not in cls._NAME_RECOVERY_STOPWORDS
+            and not t.isdigit()
+            and len(t) > 1
+        ]
+        # The remaining tokens are likely the name (sometimes with a stray
+        # subject/branch token); join them back. search_student already
+        # does word-by-word LIKE matching, so an extra token won't break it
+        # so long as the actual name tokens are present.
+        return " ".join(tokens).strip()
 
     @staticmethod
     def _dispatch_slot_summary(slots: dict | None) -> str:

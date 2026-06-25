@@ -176,6 +176,31 @@ reasoning : ONE short sentence explaining your plan. For logs + debugging.
     makes clear via active_student_followup). If the query is "pass rate
     in semester 3", entities must NOT contain a subject — the user did not
     name one. Inventing a subject changes the answer and is a hard failure.
+14. PLURALITY MATTERS for top-N. "topper" / "highest" / "best" (singular) →
+    top_n=1. "toppers" / "list of toppers" / "top students" (plural with
+    no number) → top_n=10. Returning a single row when the user asked for
+    a LIST is a wrong answer, not a stylistic choice. If a number is
+    present ("top 5", "list of 7 students"), use it verbatim.
+15. SUBJECT NAMES that refer to MULTIPLE distinct courses in the dataset
+    must trigger clarification. The KCCITM dataset has THREE math courses
+    (Mathematics-I in semester 1, Mathematics-II in semester 2,
+    Mathematics-IV in semester 4) — so a bare "math" / "maths" /
+    "mathematics" WITHOUT a level number (1/2/4 or I/II/IV) is ambiguous.
+    Set needs_clarification=true with options for each. The same applies
+    to any subject that can legitimately match more than one course in
+    the dataset; trust the dataset context above. Subjects with a clear
+    single match (DBMS, OS, DAA, Chemistry, Physics, etc.) do NOT need
+    this clarification.
+16. EXTRACT STUDENT NAMES VERBATIM. When you set student_name, copy the
+    EXACT characters the user typed — do not "correct" spelling,
+    transliterate, or substitute a more common name. Indian names have
+    many valid spellings (Sukriti, Srikriti, Srikuti, Sruktri are all
+    distinct people); the user knows which one they meant. If the user
+    wrote "soumya sukriti", student_name MUST be "soumya sukriti"
+    (case-preserving fine, character-preserving required). Same rule for
+    father_name, branch tokens the user spelled, and any other proper
+    nouns. The downstream lookup uses fuzzy LIKE matching — your job is
+    to pass through what was typed, not to guess at intent.
 
 === DATASET (for grounding entity extraction) ===
 {dataset_ctx}
@@ -247,6 +272,69 @@ Example C — bare subject without an operation (ask for clarification):
   "clarification_options": ["Average marks in DBMS", "Top 10 students in DBMS", "Pass rate in DBMS"],
   "needs_templates": false,
   "reasoning": "Subject mentioned but no operation given — three distinct interpretations."
+}}
+
+Example D — bare "math" (no level number) is ambiguous across THREE math courses:
+"math topper"
+{{
+  "intent": "analytical",
+  "operation": "unknown",
+  "route": "AUTO",
+  "entities": {{}},
+  "student_name": null,
+  "roll_no": null,
+  "expanded_query": "math topper",
+  "is_followup": false,
+  "active_student_followup": false,
+  "confidence": 0.4,
+  "ambiguities": ["which math course — Mathematics-I, Mathematics-II, or Mathematics-IV?"],
+  "needs_clarification": true,
+  "clarification_question": "Which math course did you mean?",
+  "clarification_options": ["Topper in Mathematics-I", "Topper in Mathematics-II", "Topper in Mathematics-IV"],
+  "needs_templates": false,
+  "reasoning": "Bare 'math' refers to three distinct courses across semesters 1, 2, and 4 — picking one would be a guess that changes the answer (hard rule 15)."
+}}
+
+Example E — plural "toppers" / "list of toppers" implies top_n>=10, NOT 1:
+"list of toppers in math 2 in batch 2024"
+{{
+  "intent": "analytical",
+  "operation": "list",
+  "route": "SQL",
+  "entities": {{"subject": "math 2", "batch": "2024", "top_n": 10}},
+  "student_name": null,
+  "roll_no": null,
+  "expanded_query": "list of toppers in math 2 in batch 2024",
+  "is_followup": false,
+  "active_student_followup": false,
+  "confidence": 0.85,
+  "ambiguities": [],
+  "needs_clarification": false,
+  "clarification_question": null,
+  "clarification_options": [],
+  "needs_templates": false,
+  "reasoning": "Plural 'toppers' with no explicit number — defaulting top_n=10 per hard rule 14. operation=list, not lookup; user wants a ranked list."
+}}
+
+Example F — bare branch + "failures" is ambiguous between cohort and subject:
+"mechanical engineering failures"
+{{
+  "intent": "analytical",
+  "operation": "unknown",
+  "route": "AUTO",
+  "entities": {{"branch": "MECHANICAL ENGINEERING"}},
+  "student_name": null,
+  "roll_no": null,
+  "expanded_query": "mechanical engineering failures",
+  "is_followup": false,
+  "active_student_followup": false,
+  "confidence": 0.5,
+  "ambiguities": ["which failure metric — overall pass rate, list of failed students, or fails in a specific subject?"],
+  "needs_clarification": true,
+  "clarification_question": "Which kind of failure data did you want for Mechanical Engineering?",
+  "clarification_options": ["Overall pass rate for ME", "Students who failed (any subject) in ME", "Fails in a specific ME subject"],
+  "needs_templates": false,
+  "reasoning": "Branch + 'failures' alone names three distinct queries with different answers; pick one would be a guess."
 }}
 
 Your output:"""
