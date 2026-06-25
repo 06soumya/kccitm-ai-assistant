@@ -145,6 +145,174 @@ def _normalize_branch(branch: str | None, query_hint: str = "") -> str | None:
         return branch
 
 
+# ── Subject normalization ─────────────────────────────────────────────────────
+#
+# The planner extracts subjects verbatim from user text ("Math 1", "DBMS",
+# "ds (data structrure)"). DB column subject_name uses canonical names
+# ("Mathematics-I", "Engineering Mathematics-I", "Database Management System",
+# "Data Structure"). Plain LIKE '%subject%' produces 0 matches for almost
+# every abbreviation.
+#
+# This map converts known abbreviations/aliases to a LIST of canonical name
+# fragments. _subject_where() then builds an OR'd LIKE clause covering all
+# variants present in the DB (the same subject appears with multiple
+# subject_codes — BAS103/BAS103H/KAS103T for Math-I, etc., so we match by
+# subject_name fragments not subject_code).
+#
+# Maintenance: when a new abbreviation surfaces in eval logs, add it here.
+# The fallback is always a single LIKE '%input%' so an unmapped subject still
+# works when the user spells it out.
+_SUBJECT_ALIASES: dict[str, list[str]] = {
+    # Mathematics (sem-numbered)
+    "math 1": ["Mathematics-I", "Mathematics I"],
+    "math i": ["Mathematics-I", "Mathematics I"],
+    "math1": ["Mathematics-I", "Mathematics I"],
+    "maths 1": ["Mathematics-I", "Mathematics I"],
+    "maths i": ["Mathematics-I", "Mathematics I"],
+    "mathematics 1": ["Mathematics-I", "Mathematics I"],
+    "mathematics i": ["Mathematics-I", "Mathematics I"],
+    "math 2": ["Mathematics-II", "Mathematics II"],
+    "math ii": ["Mathematics-II", "Mathematics II"],
+    "math2": ["Mathematics-II", "Mathematics II"],
+    "maths 2": ["Mathematics-II", "Mathematics II"],
+    "maths ii": ["Mathematics-II", "Mathematics II"],
+    "mathematics 2": ["Mathematics-II", "Mathematics II"],
+    "mathematics ii": ["Mathematics-II", "Mathematics II"],
+    "math 3": ["Mathematics-III", "Mathematics III"],
+    "math iii": ["Mathematics-III", "Mathematics III"],
+    "math 4": ["Mathematics-IV", "Maths IV"],
+    "math iv": ["Mathematics-IV", "Maths IV"],
+    "math4": ["Mathematics-IV", "Maths IV"],
+    "maths 4": ["Mathematics-IV", "Maths IV"],
+    "maths iv": ["Mathematics-IV", "Maths IV"],
+    "mathematics 4": ["Mathematics-IV", "Maths IV"],
+    "mathematics iv": ["Mathematics-IV", "Maths IV"],
+    # Core CS abbreviations
+    "dbms": ["Database Management System"],
+    "ds": ["Data Structure"],
+    "data structure": ["Data Structure"],
+    "data structures": ["Data Structure"],
+    "daa": ["Design and Analysis of Algorithm"],
+    "design and analysis": ["Design and Analysis of Algorithm"],
+    "os": ["Operating System"],
+    "operating system": ["Operating System"],
+    "operating systems": ["Operating System"],
+    "cn": ["Computer Networks", "Computer Network"],
+    "computer network": ["Computer Networks", "Computer Network"],
+    "computer networks": ["Computer Networks", "Computer Network"],
+    "se": ["Software Engineering"],
+    "software engineering": ["Software Engineering"],
+    "wt": ["Web Technology"],
+    "web tech": ["Web Technology"],
+    "web technology": ["Web Technology"],
+    "coa": ["Computer Organization", "Computer Organisation"],
+    "computer organization": ["Computer Organization", "Computer Organisation"],
+    "computer organisation": ["Computer Organization", "Computer Organisation"],
+    "toc": ["Theory of Automata", "Theory of Computation"],
+    "tafl": ["Theory of Automata and Formal Languages"],
+    "cd": ["Compiler Design"],
+    "compiler": ["Compiler Design"],
+    "compiler design": ["Compiler Design"],
+    "mp": ["Microprocessor"],
+    "microprocessor": ["Microprocessor"],
+    "pps": ["Programming for Problem Solving"],
+    "oop": ["Object Oriented Programming", "Object Oriented System Design"],
+    "oops": ["Object Oriented Programming", "Object Oriented System Design"],
+    "java": ["Object Oriented Programming with Java"],
+    "python": ["Python programming", "Python Programming",
+               "Python Language Programming"],
+    "ai": ["Artificial Intelligence"],
+    "artificial intelligence": ["Artificial Intelligence"],
+    "ml": ["Machine Learning"],
+    "machine learning": ["Machine Learning"],
+    "dl": ["Deep Learning"],
+    "deep learning": ["Deep Learning"],
+    "da": ["Data Analytics"],
+    "data analytics": ["Data Analytics", "Data Analytics and Visualization"],
+    "big data": ["Big Data"],
+    "iot": ["Internet of Things"],
+    "cloud": ["Cloud Computing"],
+    "cloud computing": ["Cloud Computing"],
+    "nlp": ["Natural language processing", "Natural Language Processing"],
+    "cyber security": ["Cyber Security"],
+    "cyber": ["Cyber Security"],
+    # Sciences
+    "chemistry": ["Engineering Chemistry", "Chemistry"],
+    "physics": ["Engineering Physics", "Physics"],
+    # Electrical / Electronics / Mechanical
+    "bee": ["Basic Electrical Engineering",
+            "Fundamentals of Electrical Engineering"],
+    "basic electrical": ["Basic Electrical Engineering",
+                         "Fundamentals of Electrical Engineering"],
+    "electrical": ["Basic Electrical Engineering",
+                   "Fundamentals of Electrical Engineering"],
+    "electronics": ["Electronics Engineering",
+                    "Fundamentals of Electronics Engineering",
+                    "Basic Electronics Engineering",
+                    "Emerging Domain in Electronics Engineering"],
+    "mechanical": ["Mechanical Engineering",
+                   "Fundamentals of Mechanical Engineering"],
+    "fme": ["Fundamentals of Mechanical Engineering"],
+    # Humanities / others
+    "english": ["English Language", "Technical Communication"],
+    "tc": ["Technical Communication"],
+    "soft skills": ["Soft Skills", "Soft Skill"],
+    "environment": ["Environment and Ecology"],
+}
+
+
+def _normalize_subject_key(s: str) -> str:
+    """Lowercase, strip punctuation/whitespace runs, for alias lookup."""
+    s = s.lower().strip()
+    # Strip parenthesized aliases: "ds (data structrure)" → "ds"
+    paren = s.find("(")
+    if paren > 0:
+        s = s[:paren].strip()
+    # Collapse multiple spaces / strip trailing punctuation
+    s = re.sub(r"[^\w\s-]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _subject_likes(subject: str) -> list[str]:
+    """
+    Return a list of LIKE patterns (already wrapped in %) that should match
+    this subject in subject_name. Falls back to a single substring match
+    when no alias is known.
+    """
+    if not subject:
+        return []
+    key = _normalize_subject_key(subject)
+    fragments = _SUBJECT_ALIASES.get(key)
+    if fragments:
+        return [f"%{f}%" for f in fragments]
+    # Unknown subject → trust the planner's text (user may have typed the
+    # canonical name verbatim).
+    return [f"%{subject}%"]
+
+
+def _subject_where(subject: str, table_alias: str = "sm") -> tuple[str, list[str]]:
+    """
+    Build a WHERE-clause fragment for a subject filter, ORing across all
+    known canonical names for an alias. Returns (clause, params).
+
+    Example:
+        _subject_where("dbms", "sm")
+        → ("(sm.subject_name LIKE %s)",
+           ["%Database Management System%"])
+
+        _subject_where("math 1", "sm")
+        → ("(sm.subject_name LIKE %s OR sm.subject_name LIKE %s)",
+           ["%Mathematics-I%", "%Mathematics I%"])
+    """
+    likes = _subject_likes(subject)
+    if not likes:
+        return "", []
+    col = f"{table_alias}.subject_name"
+    clause = "(" + " OR ".join([f"{col} LIKE %s"] * len(likes)) + ")"
+    return clause, likes
+
+
 def _semester_int(semester: Any) -> int | None:
     """Validate semester ∈ [1, 8]."""
     if semester is None:
@@ -275,7 +443,8 @@ async def top_students_in_subject(
         "semester": sem, "batch": prefix, "n": n,
     }
 
-    where, params = ["sm.subject_name LIKE %s"], [f"%{subject}%"]
+    subj_clause, subj_params = _subject_where(subject, "sm")
+    where, params = [subj_clause], list(subj_params)
     if branch_norm:
         where.append("s.branch = %s")
         params.append(branch_norm)
@@ -322,24 +491,44 @@ async def pass_rate(
     }
 
     if subject:
-        where = ["sm.subject_name LIKE %s"]
-        params: list = [f"%{subject}%"]
+        subj_clause, subj_params = _subject_where(subject, "sm")
+        where = [subj_clause]
+        params: list = list(subj_params)
         if sem is not None:
             where.append("sm.semester = %s"); params.append(sem)
         if branch_norm:
             where.append("s.branch = %s"); params.append(branch_norm)
         if prefix:
             where.append("sm.roll_no LIKE %s"); params.append(f"{prefix}%")
+        # Column semantics — kept coherent to avoid the formatter LLM
+        # bailing on apparent contradictions (previously had passed>total
+        # because passed counted rows but total counted distinct students,
+        # so the 7B model said "no data" because the numbers didn't reconcile).
+        #
+        # PRIMARY answer columns are at the STUDENT level (DISTINCT roll_no):
+        #   students_failed = distinct students with at least one F in matching rows
+        #   students_passed = distinct students with no F at all
+        #   total_students  = distinct students matched
+        #
+        # Supporting columns are at the ATTEMPT level (rows = student×subject_code):
+        #   pass_rate_pct, attempts_passed, attempts_failed, attempts_total
         sql = f"""
             SELECT
+                COUNT(DISTINCT CASE WHEN sm.grade = 'F' THEN sm.roll_no END)
+                    AS students_failed,
+                COUNT(DISTINCT sm.roll_no)
+                    - COUNT(DISTINCT CASE WHEN sm.grade = 'F' THEN sm.roll_no END)
+                    AS students_passed,
                 COUNT(DISTINCT sm.roll_no) AS total_students,
-                SUM(CASE WHEN sm.grade <> 'F' AND sm.grade IS NOT NULL THEN 1 ELSE 0 END) AS passed,
-                SUM(CASE WHEN sm.grade = 'F' THEN 1 ELSE 0 END) AS failed,
                 ROUND(
                     100.0 * SUM(CASE WHEN sm.grade <> 'F' AND sm.grade IS NOT NULL THEN 1 ELSE 0 END)
                           / NULLIF(COUNT(*), 0),
                     2
-                ) AS pass_rate_pct
+                ) AS pass_rate_pct,
+                SUM(CASE WHEN sm.grade <> 'F' AND sm.grade IS NOT NULL THEN 1 ELSE 0 END)
+                    AS attempts_passed,
+                SUM(CASE WHEN sm.grade = 'F' THEN 1 ELSE 0 END) AS attempts_failed,
+                COUNT(*) AS attempts_total
             FROM subject_marks sm
             JOIN students s ON sm.roll_no = s.roll_no
             {_build_where(where)}
@@ -495,7 +684,8 @@ async def average_marks(
     prefix = _batch_prefix(batch)
     slots = {"subject": subject, "semester": sem, "branch": branch_norm, "batch": prefix}
 
-    where, params = ["sm.subject_name LIKE %s"], [f"%{subject}%"]
+    subj_clause, subj_params = _subject_where(subject, "sm")
+    where, params = [subj_clause], list(subj_params)
     if sem is not None:
         where.append("sm.semester = %s"); params.append(sem)
     if branch_norm:

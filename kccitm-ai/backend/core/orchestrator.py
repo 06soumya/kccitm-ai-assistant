@@ -909,6 +909,15 @@ class Orchestrator:
                 )
             else:
                 sql_context = self.context_builder.build_sql_context(sql_result)
+                # Surface the actual slot values so the formatter LLM stops
+                # bailing on parameterized SQL ("WHERE roll_no LIKE %s" alone
+                # tells the model nothing about which batch was filtered).
+                # Without this, count_query and pass_rate with non-empty
+                # results were getting "I don't have sufficient data" because
+                # the LLM literally couldn't tell what the placeholders meant.
+                filter_summary = self._dispatch_slot_summary(executor_result.slots)
+                if filter_summary:
+                    sql_context = f"{sql_context}\nApplied filters: {filter_summary}\n"
                 response_text = await self._generate_sql_summary(
                     query, sql_context, chat_history,
                 )
@@ -1448,6 +1457,27 @@ class Orchestrator:
             v = filters.get(k)
             if v:
                 parts.append(f"{k}={v}")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _dispatch_slot_summary(slots: dict | None) -> str:
+        """
+        Render executor slot dict as a filter description for the formatter LLM.
+        Inflates the 2-digit batch prefix back to the 4-digit year ("24" → "2024")
+        so the answer text matches the user's framing.
+        """
+        if not slots:
+            return ""
+        parts = []
+        for k in ("name", "roll_no", "branch", "course", "semester",
+                 "subject", "gender", "n"):
+            v = slots.get(k)
+            if v not in (None, "", []):
+                parts.append(f"{k}={v}")
+        batch = slots.get("batch")
+        if batch:
+            year = f"20{batch}" if len(str(batch)) == 2 else str(batch)
+            parts.append(f"batch={year}")
         return ", ".join(parts)
 
     async def _handle_rag(
