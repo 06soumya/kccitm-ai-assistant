@@ -101,7 +101,9 @@ async def chat(
         user_id=current_user.user_id,
     )
 
-    if not result.success:
+    if not result.success and not result.response:
+        # No usable text to show the user — a genuine internal failure
+        # (unhandled exception), not a graceful "couldn't answer" decline.
         raise HTTPException(status_code=500, detail=result.error)
 
     return ChatResponse(
