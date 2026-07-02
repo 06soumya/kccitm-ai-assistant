@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     OLLAMA_DRAFT_MODEL: str = "qwen3:1.7b"
     OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
     OLLAMA_EMBED_DIM: int = 768
+    # SQL-specialized local model used as a fallback when kccitm-v2's SQL
+    # generation fails/returns 0 rows/fails a sanity check. Empty = disabled.
+    # Default OFF: testing showed the pulled "sqlcoder:latest" (4.1GB Q4)
+    # produces syntactically-invalid (ILIKE, a Postgres-ism) or silently
+    # wrong SQL (missing LIMIT/WHERE, 153k garbage rows with no exception)
+    # on this schema even with a curated CREATE TABLE prompt — riskier than
+    # the honest "couldn't compute reliably" message it would replace. Set
+    # to "sqlcoder" to re-enable if a better prompt/model is found later.
+    SQLCODER_MODEL: str = ""
 
     # ── SQLite database paths ─────────────────────────────────────────────────
     SESSION_DB: str = "data/sessions.db"

@@ -984,13 +984,13 @@ class Orchestrator:
         # ── LLM-SQL path (long-tail / novel queries) ───────────────────────
         sql_result = await self.sql_pipeline.run(query, route_result)
 
-        # Path A: Local SQL failed entirely → try OpenAI SQL → honest error or RAG
+        # Path A: Local SQL failed entirely → try sqlcoder/OpenAI → honest error or RAG
         if not sql_result.success:
-            logger.info("SQL failed (%s) — trying OpenAI SQL", sql_result.error)
-            openai_result = await self._try_openai_sql(query)
-            if openai_result:
-                sql_result = openai_result
-                sql_result.explanation = "(corrected by OpenAI)"
+            logger.info("SQL failed (%s) — trying SQL fallback", sql_result.error)
+            fallback_result = await self._try_llm_fallback_sql(query)
+            if fallback_result:
+                sql_result = fallback_result
+                sql_result.explanation = sql_result.explanation or "(corrected by OpenAI)"
             else:
                 # CORRECTNESS GUARD: when the planner classified this as
                 # an analytical query (list / aggregate / comparison), RAG
@@ -1037,13 +1037,15 @@ class Orchestrator:
                     metadata={"fallback": True, "sql_error": sql_result.error},
                 )
 
-        # Path B: Local SQL returned 0 rows → try OpenAI SQL → RAG fallback
+        # Path B: Local SQL returned 0 rows → try sqlcoder/OpenAI → RAG fallback
         if sql_result.row_count == 0:
-            logger.info("SQL returned 0 rows — trying OpenAI SQL")
-            openai_result = await self._try_openai_sql(query)
-            if openai_result and openai_result.row_count > 0:
-                sql_result = openai_result
-                sql_result.explanation = "(corrected by OpenAI — local returned 0 rows)"
+            logger.info("SQL returned 0 rows — trying SQL fallback")
+            fallback_result = await self._try_llm_fallback_sql(query)
+            if fallback_result and fallback_result.row_count > 0:
+                sql_result = fallback_result
+                sql_result.explanation = (
+                    sql_result.explanation or "(corrected by OpenAI — local returned 0 rows)"
+                )
             else:
                 # Analytical queries (list / aggregate / comparison) must NOT
                 # fall through to RAG — RAG produces a narrative table from a
@@ -1104,12 +1106,14 @@ class Orchestrator:
             from core.openai_sql import sanity_check
             is_valid, reason = sanity_check(query, sql_result.sql, sql_result.rows)
             if not is_valid:
-                logger.info("Sanity check failed (%s) — trying OpenAI SQL", reason)
-                openai_result = await self._try_openai_sql(query)
-                if openai_result and openai_result.row_count > 0:
-                    sql_result = openai_result
-                    sql_result.explanation = f"(corrected by OpenAI — {reason})"
-                # If OpenAI also fails, keep original result (better than nothing)
+                logger.info("Sanity check failed (%s) — trying SQL fallback", reason)
+                fallback_result = await self._try_llm_fallback_sql(query)
+                if fallback_result and fallback_result.row_count > 0:
+                    sql_result = fallback_result
+                    sql_result.explanation = (
+                        sql_result.explanation or f"(corrected by OpenAI — {reason})"
+                    )
+                # If both fallbacks also fail, keep original result (better than nothing)
         except Exception as exc:
             logger.debug("Sanity check skipped: %s", exc)
 
@@ -1136,6 +1140,109 @@ class Orchestrator:
             sql_result=sql_result,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _build_sqlcoder_ddl() -> str:
+        """
+        CREATE-TABLE-style schema block scoped to the 3 tables this app
+        actually queries (SCHEMA_TABLES in sql_pipeline.py) — sqlcoder has no
+        fine-tuned bias toward the right tables the way kccitm-v2 does, so
+        showing it the raw SHOW-TABLES dump (12K+ chars, since this MySQL
+        instance also hosts an unrelated attendance-tracking schema —
+        `attendance`, `batch`, `student_logs`, etc.) makes it hallucinate
+        wrong table names. The curated dict also carries POSSIBLE VALUES /
+        nullability hints sqlcoder benefits from.
+        """
+        from core.sql_pipeline import SCHEMA_TABLES
+
+        lines = []
+        for table_name, table_def in SCHEMA_TABLES.items():
+            col_defs = []
+            for col_name, col in table_def["columns"].items():
+                comment = col.get("desc", "").replace("'", "")
+                col_defs.append(f"  {col_name} {col['type']} COMMENT '{comment}'")
+            lines.append(f"CREATE TABLE {table_name} (\n" + ",\n".join(col_defs) + "\n);")
+        return "\n\n".join(lines)
+
+    async def _try_sqlcoder_sql(self, query: str):
+        """
+        Try generating SQL via the local SQL-specialized sqlcoder model and
+        executing it. Free, local, no network — tried before the OpenAI
+        fallback. Returns an SQLResult on success, None on failure/disabled.
+        Never raises.
+        """
+        if not settings.SQLCODER_MODEL:
+            return None
+        try:
+            from core.sql_pipeline import SQLResult, SQLValidator
+            from db.mysql_client import execute_query
+
+            ddl = self._build_sqlcoder_ddl()
+
+            # sqlcoder was trained on this exact Task/Schema/Answer template
+            # in raw-completion style (no system prompt) — deviating from it
+            # measurably hurts output quality. It defaults to Postgres-isms
+            # (ILIKE, NULLS LAST) that MySQL rejects, so the dialect note is
+            # required, not optional.
+            prompt = (
+                "### Task\n"
+                f"Generate a SQL query to answer this question: `{query}`\n\n"
+                "### Database Schema\n"
+                "The query will run on a MySQL database with the following "
+                "schema. Use MySQL syntax only — LIKE is already "
+                "case-insensitive here, so never use ILIKE; never use NULLS "
+                "LAST/NULLS FIRST; wrap reserved words like `match` in "
+                "backticks.\n"
+                f"{ddl}\n\n"
+                "### Answer\n"
+                f"Given the database schema, here is the SQL query that "
+                f"answers `{query}`:\n```sql\n"
+            )
+
+            raw = await self.llm.generate(
+                prompt=prompt,
+                model=settings.SQLCODER_MODEL,
+                temperature=0.0,
+                max_tokens=400,
+            )
+            sqlcoder_sql = raw.split("```")[0].strip().rstrip(";")
+            if not sqlcoder_sql:
+                return None
+
+            validation_error = SQLValidator.validate(sqlcoder_sql)
+            if validation_error:
+                logger.warning("sqlcoder SQL validation failed: %s", validation_error)
+                return None
+
+            safe_sql = sqlcoder_sql.replace("%", "%%")
+            logger.info("Executing sqlcoder SQL: %s", sqlcoder_sql[:200])
+            rows = await execute_query(safe_sql)
+            if rows is not None:
+                result = SQLResult(
+                    success=True, sql=sqlcoder_sql, rows=rows, row_count=len(rows),
+                )
+                result.formatted_table = self.sql_pipeline._format_as_markdown_table(rows)
+                result.formatted_text = self.sql_pipeline._format_as_text(
+                    rows, sqlcoder_sql, "", []
+                )
+                result.explanation = "(via sqlcoder)"
+                logger.info("sqlcoder SQL succeeded: %d rows", len(rows))
+                return result
+
+        except Exception as exc:
+            logger.warning("sqlcoder SQL fallback failed: %s", exc)
+        return None
+
+    async def _try_llm_fallback_sql(self, query: str):
+        """
+        Escalation ladder for when kccitm-v2's SQL generation fails: local
+        sqlcoder first (free, no network), then OpenAI if configured.
+        Returns an SQLResult or None — never raises.
+        """
+        result = await self._try_sqlcoder_sql(query)
+        if result:
+            return result
+        return await self._try_openai_sql(query)
 
     async def _try_openai_sql(self, query: str):
         """
